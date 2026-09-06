@@ -1,0 +1,34 @@
+# ===================== .NET / 服务端 =====================
+bin/
+obj/
+*.user
+*.suo
+.vs/
+artifacts/
+
+# ===================== 微信小游戏 =====================
+# 开发者工具生成的个人配置（含个人偏好，不应入库）
+we_jump_wx/project.private.config.json
+we_jump_wx/miniprogram_npm/
+# 开发工具本地调试产物
+we_jump_wx/.eslintrc.*
+we_jump_wx/*.map
+
+# ===================== Node =====================
+node_modules/
+
+# ===================== 编辑器 / 系统 =====================
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.DS_Store
+Thumbs.db
+
+# ===================== 本地配置 / 密钥 =====================
+# 保留 appsettings.json（示例模板），仅忽略本地覆盖文件
+appsettings.Local.json
+appsettings.*.local.json
+.env
+.env.*
+*.secret.json

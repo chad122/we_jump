@@ -1,0 +1,12 @@
+{
+  "appid": "touristappid",
+  "compileType": "game",
+  "projectname": "we_jump_wx",
+  "setting": {
+    "es6": true,
+    "postcss": false,
+    "minified": true,
+    "urlCheck": false
+  },
+  "libVersion": "2.30.0"
+}
