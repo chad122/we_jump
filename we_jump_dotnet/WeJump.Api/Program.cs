@@ -35,18 +35,18 @@ app.MapPost("/api/auth/login", async (JsonElement body, AuthService auth) =>
     if (string.IsNullOrEmpty(code))
         return Results.BadRequest(new { code = "bad_request", msg = "缺少 code" });
 
-    var result = await auth.LoginAsync(code, nickname, avatarUrl);
-    if (result == null)
-        return Results.Json(new { code = "wx_login_failed", msg = "微信登录凭证校验失败" }, statusCode: 401);
+    var outcome = await auth.LoginAsync(code, nickname, avatarUrl);
+    if (outcome.User == null || outcome.Token == null)
+        return Results.Json(new { code = "wx_login_failed", msg = outcome.Error ?? "微信登录凭证校验失败" }, statusCode: 401);
 
     return Results.Ok(new
     {
-        token = result.Value.Token,
+        token = outcome.Token,
         user = new
         {
-            id = result.Value.User.Id,
-            nickname = result.Value.User.Nickname,
-            avatarUrl = result.Value.User.AvatarUrl
+            id = outcome.User.Id,
+            nickname = outcome.User.Nickname,
+            avatarUrl = outcome.User.AvatarUrl
         }
     });
 });
@@ -71,7 +71,7 @@ app.MapGet("/api/maps", async (string? token, AuthService auth) =>
 });
 
 // ---------- WebSocket ----------
-app.Map("/ws", async (HttpContext ctx, GameHub hub) =>
+app.Map("/ws", async (HttpContext ctx) =>
 {
     if (!ctx.WebSockets.IsWebSocketRequest)
     {
@@ -81,6 +81,7 @@ app.Map("/ws", async (HttpContext ctx, GameHub hub) =>
     }
 
     var token = ctx.Request.Query["token"].ToString();
+    var hub = ctx.RequestServices.GetRequiredService<GameHub>();
     using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
     await hub.RunAsync(ws, token, ctx.RequestAborted);
 });

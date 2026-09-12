@@ -3,6 +3,9 @@ using WeJump.Api.Models;
 
 namespace WeJump.Api.Services;
 
+/// <summary>登录结果：成功时 User/Token 非空；失败时 Error 说明原因。</summary>
+public sealed record LoginOutcome(User? User, string? Token, string? Error);
+
 /// <summary>登录：微信 code -> openid -> 本地 user upsert -> 签发 Redis 令牌。</summary>
 public sealed class AuthService
 {
@@ -19,11 +22,13 @@ public sealed class AuthService
         _wx = wx;
     }
 
-    public async Task<(User User, string Token)?> LoginAsync(string code, string nickname, string avatarUrl)
+    public async Task<LoginOutcome> LoginAsync(string code, string nickname, string avatarUrl)
     {
-        var openId = await _wx.Code2SessionAsync(code);
-        if (string.IsNullOrEmpty(openId))
-            return null;
+        var wx = await _wx.Code2SessionAsync(code);
+        if (string.IsNullOrEmpty(wx.OpenId))
+            return new LoginOutcome(null, null, wx.Error ?? "微信登录凭证校验失败");
+
+        var openId = wx.OpenId!;
 
         var user = await _db.FindUserByOpenIdAsync(openId);
         if (user is null)
@@ -39,7 +44,7 @@ public sealed class AuthService
 
         var token = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
         await _redis.SetTokenAsync(token, user.Id, TokenTtl);
-        return (user, token);
+        return new LoginOutcome(user, token, null);
     }
 
     public async Task<long> ResolveUserIdAsync(string token)

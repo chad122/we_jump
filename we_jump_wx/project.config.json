@@ -1,12 +1,38 @@
 {
-  "appid": "touristappid",
-  "compileType": "game",
+  "description": "多人跳一跳 · 微信小游戏客户端",
+  "appid": "wxe3e5573dd7efbd7c",
   "projectname": "we_jump_wx",
+  "compileType": "game",
+  "libVersion": "latest",
+  "isGameTourist": false,
   "setting": {
     "es6": true,
     "postcss": false,
     "minified": true,
-    "urlCheck": false
+    "urlCheck": false,
+    "ignoreDevUnusedFiles": false,
+    "compileWorklet": false,
+    "uglifyFileName": false,
+    "uploadWithSourceMap": true,
+    "enhance": false,
+    "packNpmManually": false,
+    "packNpmRelationList": [],
+    "minifyWXSS": true,
+    "minifyWXML": true,
+    "localPlugins": false,
+    "disableUseStrict": false,
+    "useCompilerPlugins": false,
+    "condition": false,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
   },
-  "libVersion": "2.30.0"
+  "simulatorPluginLibVersion": {},
+  "packOptions": {
+    "ignore": [],
+    "include": []
+  },
+  "editorSetting": {}
 }

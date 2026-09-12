@@ -20,7 +20,7 @@ we_jump_wx/             微信小游戏客户端（原生 JS + Canvas 2D）
   js/logic/             蓄力公式、路径工具、地图元信息
   js/net/               HTTP + WebSocket（含自动重连）
   js/render|ui/         绘制工具、按钮
-  openDataContext/      好友排行榜（开放数据域占位）
+docs/openDataContext-placeholder/  好友排行榜（开放数据域占位；接入时再放回游戏根目录并配置）
 docs/sql/               MySQL DDL（手动执行）
 ```
 
@@ -29,6 +29,25 @@ docs/sql/               MySQL DDL（手动执行）
 1. 建库：`mysql -uroot -p < docs/sql/20260906-we-jump-init.sql`（或直接执行 `docs/sql/init-ddl.sql`）。
 2. 服务端：改 `WeJump.Api/appsettings.json` 中 `WeJump.MySql/Redis/WxAppId/WxAppSecret`（微信凭证留空时登录走本地模拟，便于联调）；`dotnet run`（默认 5000 端口由 launchSettings/ASPNETCORE_URLS 决定）。
 3. 客户端：用微信开发者工具导入 `we_jump_wx/`，把 `js/config.js` 的 `HTTP_BASE/WS_BASE` 指向服务端；本地联调需关闭“合法域名校验”。
+
+### 登录（code2session）排错
+
+- **服务端 `WeJump.WxAppId/WxAppSecret` 必须与客户端 `project.config.json` 的 `appid` 完全一致**。不一致时 `wx.login` 拿到的 code 无法兑换，报错形如 `微信校验失败(40029) invalid code`。
+- 开发者工具若用“游客模式（touristappid）”，无法与真实 AppID 匹配：
+  - 纯本地前后端联调：把服务端 `WxAppId/WxAppSecret` **留空**，登录走本地模拟（不校验微信）；
+  - 需要真实微信登录：把 `project.config.json` 的 `appid` 改为真实 AppID，并用具备该 AppID 权限的微信号登录开发者工具。
+- 服务端现在会把微信返回的 `errcode/errmsg` 透传到客户端提示，便于定位。
+- ⚠️ 安全提示：`appsettings.json` 目前含真实 AppSecret 且会被 git 提交，建议迁移到不入库的 `appsettings.Local.json`（已在 `.gitignore` 中）或环境变量 `WeJump__WxAppSecret`。
+
+### 开发者工具报 `worker path empty`
+
+这是**工具侧**错误（找不到游戏运行 worker 的入口），与业务代码无关。按顺序排查：
+
+1. 开发者工具「导入项目」的目录必须是 **`we_jump_wx/`**（该层同时含 `game.js`、`game.json`、`project.config.json`），项目类型选**小游戏**；不要导入仓库根目录。
+2. 关闭项目 → 「工具-清除缓存-全部清除」→ 重新打开/编译。
+3. `project.config.json` 的 `compileType` 必须是 `game`；`libVersion` 用 `latest`（指定了工具本地不存在的版本会导致基础库 worker 解析为空）。
+4. 「详情-本地设置」确认调试基础库为**小游戏**基础库；必要时切换一个版本。
+5. 若仍报错，多为工具版本问题（如夜间版）：重启工具、或升级/回退到稳定版开发者工具。
 
 ## 通信协议（WebSocket，JSON 信封 `{type,data}`）
 

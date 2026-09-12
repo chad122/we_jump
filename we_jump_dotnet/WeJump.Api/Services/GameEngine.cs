@@ -171,6 +171,7 @@ public sealed class GameEngine
         p.JumpCount = 0;
         p.OutCount = 0;
         p.ArrivalOrder = 0;
+        p.FinalRank = 0;
     }
 
     private void BroadcastGameStart()

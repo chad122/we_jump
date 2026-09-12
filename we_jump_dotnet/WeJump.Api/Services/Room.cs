@@ -3,7 +3,7 @@ using WeJump.Api.Models;
 namespace WeJump.Api.Services;
 
 /// <summary>房间内一名成员（座位模型）。座位号从 0 递增，房主初始为 0 号。</summary>
-internal sealed class RoomPlayer
+public sealed class RoomPlayer
 {
     public int Seat { get; init; }
     public long UserId { get; init; }
@@ -17,6 +17,7 @@ internal sealed class RoomPlayer
     public int JumpCount = 0;
     public int OutCount = 0;
     public int ArrivalOrder = 0; // 抵达终点次序（1..n），0 = 未抵达
+    public int FinalRank = 0;    // 本局最终名次（结算时写入）
 
     public bool Online => Session != null && !Session.IsClosed;
 
