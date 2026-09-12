@@ -5,34 +5,34 @@ using WeJump.Api.Utils;
 namespace WeJump.Api.Services;
 
 /// <summary>
-/// 单房间对局引擎：回合(wave)驱动。
-/// - 每回合向所有在线未抵达玩家下发 WaveStart（含当前格/可跳格数）；
-/// - 收集各玩家 Jump/Cancel 上报，超时未上报者本回合不动；
-/// - 用蓄力时长权威反推步数并结算落点/出界/抵达；
+/// 单房间对局引擎：实时模式（无回合等待）。
+/// - 3-2-1 倒计时结束后，所有玩家可各自随时蓄力松手，互不等待；
+/// - 服务端每收到一次 Jump 即权威结算该玩家落点/出界/抵达，并立即广播 PlayerMove；
 /// - 首名抵达触发“冠军倒计时 10s”（模式A）；整局超时触发地图超时结束（模式B）；
 /// - 结束后结算名次并落库。
 /// 说明：出界判定采用“当前段安全步数 d”模型 —— 直线跳跃超过 d（越过拐弯/终点所在直线段）即飞出边界回起点。
 /// </summary>
 public sealed class GameEngine
 {
-    private const double WaveWaitMs = 12000;  // 每回合收集窗口
-    private const double WaveGapMs = 1200;    // 回合结算展示间隔
+    /// <summary>服务端允许的最小跳跃间隔(ms)：防止“连点小跳”刷进度；客户端用 700ms，正常操作不会被拒。</summary>
+    private const double JumpCooldownMs = 500;
+    /// <summary>冠军产生后的收尾倒计时（秒）。</summary>
+    private const int ChampionCountdownSeconds = 10;
 
     private readonly Room _room;
     private readonly Db _db;
     private readonly GameMap _map;
     private readonly object _lock = new();
     private readonly DateTime _createdAt = DateTime.UtcNow;
+    private readonly Dictionary<int, DateTime> _lastJumpAt = new(); // seat -> 最近一次跳跃时间
 
-    private int _seq;
-    private bool _waveOpen;
-    private List<int> _activeSeats = new();
-    private readonly Dictionary<int, double> _reports = new(); // seat -> 蓄力时长(ms)
-    private readonly HashSet<int> _reporters = new();          // 已上报（含取消）
-    private DateTime _waveEndsAt;
+    private bool _live;                 // 倒计时结束、进入可跳跃状态
+    private DateTime _gameStartUtc;
+    private long _startTs;
     private int _arrivalCounter;
     private DateTime? _championDeadline;
     private int _championSeat = -1;
+    private string _championNickname = "";
     private bool _championNotified;
     private EndReason _reason = EndReason.None;
     private Task? _runTask;
@@ -49,42 +49,103 @@ public sealed class GameEngine
         _runTask = Task.Run(RunAsync);
     }
 
-    /// <summary>接收玩家本回合跳跃上报。返回 false 表示当前不接受（未开局/回合未开/座位不符）。</summary>
-    public bool SubmitJump(int seq, int seat, double elapsedMs)
+    /// <summary>接收玩家的一次跳跃上报（elapsedMs=本次蓄力时长）。返回 false 表示不接受（未开始/已抵达/离线/间隔过短）。</summary>
+    public bool SubmitJump(int seat, double elapsedMs)
     {
-        lock (_lock)
-        {
-            if (!_waveOpen || seq != _seq) return false;
-            if (!_activeSeats.Contains(seat)) return false;
-            _reports[seat] = elapsedMs;
-            _reporters.Add(seat);
-            return true;
-        }
-    }
+        object movePayload;
+        object? championPayload = null;
 
-    /// <summary>接收“取消蓄力”上报：本回合原地不动但视为已响应。</summary>
-    public bool SubmitCancel(int seq, int seat)
-    {
         lock (_lock)
         {
-            if (!_waveOpen || seq != _seq) return false;
-            if (!_activeSeats.Contains(seat)) return false;
-            _reporters.Add(seat);
-            return true;
+            if (!_live || _room.Phase != RoomPhase.Playing) return false;
+            var p = _room.FindBySeat(seat);
+            if (p == null || !p.Online || p.Finished) return false;
+
+            var now = DateTime.UtcNow;
+            if (_lastJumpAt.TryGetValue(seat, out var last) &&
+                (now - last).TotalMilliseconds < JumpCooldownMs) return false;
+            _lastJumpAt[seat] = now;
+
+            var path = _map.Path;
+            int total = path.Count;
+            int from = p.Index;
+            // 蓄力上限固定为单跳最大格数：临近终点不再按剩余距离收窄，蓄力过头即飞出边界
+            int steps = Math.Max(1, Math.Min(Charge.StepsForMs(elapsedMs), Charge.MaxStep));
+            int safe = SegmentSafe(from);
+
+            bool isOut = false, isFinish = false;
+            int rank = 0;
+            int index = from;
+
+            if (steps > safe)
+            {
+                // 直线跳跃越过本直线段（拐弯/终点所在边界）→ 飞出，回起点
+                isOut = true;
+                index = 0;
+                p.OutCount++;
+            }
+            else
+            {
+                index = from + steps;
+                if (index == total - 1)
+                {
+                    isFinish = true;
+                    p.Finished = true;
+                    _arrivalCounter++;
+                    p.ArrivalOrder = _arrivalCounter;
+                    rank = p.ArrivalOrder;
+                    if (_championDeadline == null)
+                    {
+                        _championSeat = p.Seat;
+                        _championNickname = p.Nickname;
+                        _championDeadline = now.AddSeconds(ChampionCountdownSeconds);
+                        _championNotified = false;
+                    }
+                }
+            }
+
+            p.Index = index;
+            p.JumpCount++;
+
+            movePayload = new
+            {
+                seat = p.Seat,
+                from,
+                steps = isOut ? steps : index - from,
+                index,
+                isOut,
+                isFinish,
+                rank
+            };
+
+            if (_championDeadline != null && !_championNotified)
+            {
+                _championNotified = true;
+                championPayload = new
+                {
+                    championSeat = _championSeat,
+                    nickname = _championNickname,
+                    deadlineTs = new DateTimeOffset(_championDeadline.Value).ToUnixTimeMilliseconds()
+                };
+            }
         }
+
+        _room.Broadcast(Msg.PlayerMove, movePayload);
+        if (championPayload != null) _room.Broadcast(Msg.Champion, championPayload);
+        return true;
     }
 
     private async Task RunAsync()
     {
         try
         {
-            _room.SetPhase(RoomPhase.Playing);
             foreach (var p in _room.Players) Reset(p);
 
-            var gameStartUtc = DateTime.UtcNow;
+            _startTs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            _gameStartUtc = DateTime.UtcNow;
             BroadcastGameStart();
 
-            // 3-2-1 倒计时
+            // 3-2-1 倒计时；n=0 表示“开始”，此后玩家可各自自由跳跃
             for (int n = 3; n >= 1; n--)
             {
                 if (_room.Aborted) return;
@@ -93,68 +154,18 @@ public sealed class GameEngine
             }
             if (_room.Aborted) return;
 
+            _live = true;
+            _room.Broadcast(Msg.Countdown, new { n = 0 });
+
             while (true)
             {
                 if (_room.Aborted) return;
-                if (EvaluateEnd(gameStartUtc))
+                if (EvaluateEnd())
                 {
                     await FinalizeAsync();
                     return;
                 }
-
-                var active = ActivePlayers();
-                if (active.Count == 0)
-                {
-                    await FinalizeAsync();
-                    return;
-                }
-
-                // 开回合
-                int seq;
-                lock (_lock)
-                {
-                    _seq++;
-                    seq = _seq;
-                    _waveOpen = true;
-                    _activeSeats = active.Select(p => p.Seat).ToList();
-                    _reports.Clear();
-                    _reporters.Clear();
-                    _waveEndsAt = DateTime.UtcNow.AddMilliseconds(WaveWaitMs);
-                }
-
-                var meta = active.Select(p => new
-                {
-                    seat = p.Seat,
-                    index = p.Index,
-                    n = AllowedN(p.Index),
-                    remaining = _map.Path.Count - 1 - p.Index
-                }).ToList();
-                _room.Broadcast(Msg.WaveStart, new { seq, waitMs = (int)WaveWaitMs, players = meta });
-
-                // 等待全部上报 / 超时 / 结束条件
-                while (true)
-                {
-                    if (_room.Aborted) return;
-                    if (EvaluateEnd(gameStartUtc)) break;
-                    bool all;
-                    lock (_lock) all = _reporters.Count >= _activeSeats.Count;
-                    if (all) break;
-                    if (DateTime.UtcNow >= _waveEndsAt) break;
-                    await Task.Delay(150);
-                }
-
-                lock (_lock) _waveOpen = false;
-                if (EvaluateEnd(gameStartUtc)) continue;
-
-                SettleWave();
-
-                // 回合间展示间隙，期间若触发结束则打断
-                var gapEnd = DateTime.UtcNow.AddMilliseconds(WaveGapMs);
-                while (DateTime.UtcNow < gapEnd)
-                {
-                    if (EvaluateEnd(gameStartUtc)) break;
-                    await Task.Delay(150);
-                }
+                await Task.Delay(200);
             }
         }
         catch (Exception ex)
@@ -175,28 +186,46 @@ public sealed class GameEngine
     }
 
     private void BroadcastGameStart()
+        => _room.Broadcast(Msg.GameStart, BuildStateData());
+
+    /// <summary>断线重连时，把当前对局状态快照单独发给该连接。</summary>
+    public void SendSnapshotTo(WsSession session)
+        => session.TrySend(WsJson.Msg(Msg.GameState, BuildStateData()));
+
+    /// <summary>对局状态快照：game_start 与 game_state 同构，客户端复用同一套同步逻辑。</summary>
+    private object BuildStateData()
     {
-        var data = new
+        long? championDeadline = _championDeadline is DateTime cd
+            ? new DateTimeOffset(cd).ToUnixTimeMilliseconds()
+            : (long?)null;
+
+        return new
         {
             mapId = _map.Id,
             mapName = _map.Name,
             durationSeconds = _map.DurationSeconds,
-            startTs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            startTs = _startTs,
+            // 蓄力参数由服务端权威下发，避免两端常量不一致导致“显示的步数”与“结算步数”对不上
+            maxStep = Charge.MaxStep,
+            firstCellMs = Charge.FirstCellMs,
+            ratio = Charge.Ratio,
+            championSeat = _championSeat,
+            championName = _championNickname,
+            championDeadline,
             players = _room.Players.Select(p => new
             {
                 seat = p.Seat,
                 nickname = p.Nickname,
-                avatarUrl = p.AvatarUrl
+                avatarUrl = p.AvatarUrl,
+                index = p.Index,
+                finished = p.Finished,
+                rank = p.ArrivalOrder
             }).ToList(),
             path = _map.Path.Select(pt => new { pt.X, pt.Y }).ToList()
         };
-        _room.Broadcast(Msg.GameStart, data);
     }
 
-    private List<RoomPlayer> ActivePlayers()
-        => _room.Players.Where(p => !p.Finished && p.Online).ToList();
-
-    private bool EvaluateEnd(DateTime gameStartUtc)
+    private bool EvaluateEnd()
     {
         if (_room.Aborted) return true;
 
@@ -205,106 +234,20 @@ public sealed class GameEngine
             _reason = EndReason.ChampionCountdown;
             return true;
         }
-        if (DateTime.UtcNow - gameStartUtc >= TimeSpan.FromSeconds(_map.DurationSeconds))
+        if (DateTime.UtcNow - _gameStartUtc >= TimeSpan.FromSeconds(_map.DurationSeconds))
         {
             _reason = EndReason.MapTimeout;
             return true;
         }
 
         var all = _room.Players;
-        bool anyOnline = all.Any(p => p.Online && !p.Finished);
-        if (!anyOnline)
+        bool anyActive = all.Any(p => p.Online && !p.Finished);
+        if (!anyActive)
         {
             _reason = all.Any(p => p.Finished) ? EndReason.ChampionCountdown : EndReason.MapTimeout;
             return true;
         }
         return false;
-    }
-
-    private void SettleWave()
-    {
-        var path = _map.Path;
-        int n = path.Count;
-
-        Dictionary<int, double> reports;
-        int seq;
-        lock (_lock)
-        {
-            reports = new Dictionary<int, double>(_reports);
-            seq = _seq;
-            _waveOpen = false;
-        }
-
-        var results = new List<object>();
-        foreach (var seat in _activeSeats)
-        {
-            var p = _room.FindBySeat(seat);
-            if (p == null || p.Finished) continue;
-            if (!reports.TryGetValue(seat, out var elapsed)) continue; // 取消或超时：原地不动
-
-            int from = p.Index;
-            int remaining = n - 1 - from;
-            int allowed = Math.Min(remaining, Charge.MaxStep);
-            int steps = Math.Max(1, Math.Min(Charge.StepsForMs(elapsed), allowed));
-            int safe = SegmentSafe(from);
-
-            bool isOut = false, isFinish = false;
-            int rank = 0;
-            int index = from;
-
-            if (steps > safe)
-            {
-                // 直线跳跃越过本直线段（拐弯/终点所在边界）→ 飞出，回起点
-                isOut = true;
-                index = 0;
-                p.OutCount++;
-            }
-            else
-            {
-                index = from + steps;
-                if (index == n - 1)
-                {
-                    isFinish = true;
-                    p.Finished = true;
-                    _arrivalCounter++;
-                    p.ArrivalOrder = _arrivalCounter;
-                    rank = p.ArrivalOrder;
-                    if (_championDeadline == null)
-                    {
-                        _championSeat = p.Seat;
-                        _championDeadline = DateTime.UtcNow.AddSeconds(10);
-                    }
-                }
-            }
-
-            p.Index = index;
-            p.JumpCount++;
-
-            results.Add(new
-            {
-                seat = p.Seat,
-                from,
-                steps = isOut ? steps : index - from,
-                index,
-                isOut,
-                isFinish,
-                rank
-            });
-        }
-
-        _room.Broadcast(Msg.WaveResult, new { seq, results });
-
-        if (_championDeadline != null && !_championNotified)
-        {
-            _championNotified = true;
-            var champ = _room.FindBySeat(_championSeat);
-            _room.Broadcast(Msg.Champion, new
-            {
-                championSeat = _championSeat,
-                nickname = champ?.Nickname ?? "",
-                deadlineTs = new DateTimeOffset(_championDeadline.Value).ToUnixTimeMilliseconds()
-            });
-        }
     }
 
     /// <summary>当前格到“下一方向变化点或终点”的安全步数（含可直跳到达的拐弯格，不含拐弯后的格）。</summary>
@@ -325,9 +268,6 @@ public sealed class GameEngine
         }
         return steps;
     }
-
-    private int AllowedN(int index)
-        => Math.Min(_map.Path.Count - 1 - index, Charge.MaxStep);
 
     private async Task FinalizeAsync()
     {

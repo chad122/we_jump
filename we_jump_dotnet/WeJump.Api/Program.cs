@@ -7,7 +7,7 @@ using WeJump.Api.Services;
 // ---------- 配置 ----------
 var builder = WebApplication.CreateBuilder(args);
 var opts = builder.Configuration.GetSection("WeJump").Get<WeJumpOptions>() ?? new WeJumpOptions();
-if (opts.MaxStep <= 0) opts.MaxStep = 6;
+if (opts.MaxStep <= 0) opts.MaxStep = 10;
 
 builder.Services.AddSingleton(opts);
 builder.Services.AddSingleton(new Db(opts.MySql));
@@ -32,10 +32,12 @@ app.MapPost("/api/auth/login", async (JsonElement body, AuthService auth) =>
     var code = body.TryGetProperty("code", out var c) ? c.GetString() ?? "" : "";
     var nickname = body.TryGetProperty("nickname", out var n) ? n.GetString() ?? "" : "";
     var avatarUrl = body.TryGetProperty("avatarUrl", out var a) ? a.GetString() ?? "" : "";
+    // authorized = true 表示这次带上的是微信授权拿到的头像昵称（会覆盖库内资料并标记授权）
+    var authorized = body.TryGetProperty("authorized", out var w) && w.ValueKind == JsonValueKind.True;
     if (string.IsNullOrEmpty(code))
         return Results.BadRequest(new { code = "bad_request", msg = "缺少 code" });
 
-    var outcome = await auth.LoginAsync(code, nickname, avatarUrl);
+    var outcome = await auth.LoginAsync(code, nickname, avatarUrl, authorized);
     if (outcome.User == null || outcome.Token == null)
         return Results.Json(new { code = "wx_login_failed", msg = outcome.Error ?? "微信登录凭证校验失败" }, statusCode: 401);
 
@@ -46,7 +48,8 @@ app.MapPost("/api/auth/login", async (JsonElement body, AuthService auth) =>
         {
             id = outcome.User.Id,
             nickname = outcome.User.Nickname,
-            avatarUrl = outcome.User.AvatarUrl
+            avatarUrl = outcome.User.AvatarUrl,
+            wxAuthorized = outcome.User.WxAuthorized
         }
     });
 });
@@ -65,9 +68,28 @@ app.MapGet("/api/maps", async (string? token, AuthService auth) =>
         Difficulty = m.Difficulty,
         TotalCells = m.TotalCells,
         TurnCount = m.TurnCount,
-        DurationSeconds = m.DurationSeconds
+        DurationSeconds = m.DurationSeconds,
+        Path = m.Path
     }).ToList();
     return Results.Ok(metas);
+});
+
+// ---------- HTTP：我当前所在房间（杀进程/换设备后自动回房继续游戏） ----------
+app.MapGet("/api/room/mine", async (string? token, AuthService auth, RoomManager rooms) =>
+{
+    var uid = await auth.ResolveUserIdAsync(token ?? "");
+    if (uid <= 0)
+        return Results.Json(new { code = "unauthorized", msg = "无效的令牌" }, statusCode: 401);
+
+    var room = rooms.GetRoomOfUser(uid);
+    if (room == null) return Results.Ok(new { roomNo = (string?)null });
+
+    return Results.Ok(new
+    {
+        roomNo = room.RoomNo,
+        mapId = room.Map.Id,
+        phase = (int)room.Phase
+    });
 });
 
 // ---------- WebSocket ----------
@@ -95,5 +117,5 @@ internal sealed class WeJumpOptions
     public string Redis { get; set; } = "";
     public string WxAppId { get; set; } = "";
     public string WxAppSecret { get; set; } = "";
-    public int MaxStep { get; set; } = 6;
+    public int MaxStep { get; set; } = 10;
 }

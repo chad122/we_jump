@@ -101,6 +101,9 @@ public sealed class GameHub
                 {
                     SendJoined(session, room);
                     room.Broadcast(Msg.RoomState, room.ToDto());
+                    // 对局中重连：补发一次完整状态快照，客户端据此恢复棋盘
+                    if (room.Phase == RoomPhase.Playing && room.Engine != null)
+                        room.Engine.SendSnapshotTo(session);
                 }
                 break;
             }
@@ -134,19 +137,8 @@ public sealed class GameHub
                 if (room == null) break;
                 var p = room.FindByUser(session.UserId);
                 if (p == null || room.Engine == null || room.Phase != RoomPhase.Playing) break;
-                var seq = data?["seq"]?.GetValue<int>() ?? 0;
                 var elapsedMs = data?["elapsedMs"]?.GetValue<double>() ?? 0;
-                room.Engine.SubmitJump(seq, p.Seat, elapsedMs);
-                break;
-            }
-            case Msg.Skip:
-            {
-                var room = _manager.GetRoomOfUser(session.UserId);
-                if (room == null) break;
-                var p = room.FindByUser(session.UserId);
-                if (p == null || room.Engine == null || room.Phase != RoomPhase.Playing) break;
-                var seq = data?["seq"]?.GetValue<int>() ?? 0;
-                room.Engine.SubmitCancel(seq, p.Seat);
+                room.Engine.SubmitJump(p.Seat, elapsedMs);
                 break;
             }
             case Msg.Ping:

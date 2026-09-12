@@ -11,6 +11,7 @@ CREATE TABLE `user` (
   `open_id`     VARCHAR(64)  NOT NULL COMMENT '微信 openid',
   `nickname`    VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '昵称',
   `avatar_url`  VARCHAR(512) NOT NULL DEFAULT '' COMMENT '头像地址',
+  `wx_authorized` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否已授权微信头像昵称',
   `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),

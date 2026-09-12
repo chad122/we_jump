@@ -10,17 +10,16 @@ public static class Msg
     public const string SelectMap = "select_map";
     public const string StartGame = "start_game";
     public const string Again = "again";
-    public const string Jump = "jump";
-    public const string Skip = "skip";     // 取消蓄力：本回合原地不动但已响应
+    public const string Jump = "jump";     // 实时跳跃上报 {elapsedMs}
     public const string Ping = "ping";
 
     // Server -> Client
     public const string Joined = "joined";           // 加入/创建成功（附房间快照 + 本人座位）
     public const string RoomState = "room_state";    // 房间变化（成员/选图/阶段）
     public const string GameStart = "game_start";    // 开局（附地图路径与参赛者）
-    public const string Countdown = "countdown";     // 3-2-1
-    public const string WaveStart = "wave_start";    // 每回合开始（附每人当前位置/可跳信息）
-    public const string WaveResult = "wave_result";  // 每回合结算
+    public const string GameState = "game_state";    // 对局状态快照（断线重连同步）
+    public const string Countdown = "countdown";     // 3-2-1；n=0 表示开始（此后可自由跳跃）
+    public const string PlayerMove = "player_move";  // 某位玩家的一次移动结算
     public const string Champion = "champion";       // 出现冠军，进入 10s 倒计时
     public const string GameEnd = "game_end";        // 对局结束（附名次）
     public const string Error = "error";
@@ -46,7 +45,7 @@ public sealed class RoomDto
     public List<RoomPlayerDto> Players { get; set; } = new();
 }
 
-/// <summary>地图元信息（列表/选图用，不含路径；路径在对局开始下发）。</summary>
+/// <summary>地图元信息（列表/选图用，含路径，供客户端绘制缩略图）。</summary>
 public sealed class MapMetaDto
 {
     public int Id { get; set; }
@@ -55,4 +54,5 @@ public sealed class MapMetaDto
     public int TotalCells { get; set; }
     public int TurnCount { get; set; }
     public int DurationSeconds { get; set; }
+    public List<GridPoint> Path { get; set; } = new();
 }

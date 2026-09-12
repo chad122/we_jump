@@ -8,14 +8,11 @@ module.exports = {
   HTTP_BASE: 'http://127.0.0.1:5000',
   WS_BASE: 'ws://127.0.0.1:5000/ws',
 
-  // ---- 蓄力 / 跳跃规则常量（必须与 we_jump_dotnet Utils/Charge.cs 保持一致） ----
-  MaxStep: 6,          // 单跳最大格数
-  FirstCellMs: 500,    // 第1格蓄满耗时(ms)
-  Ratio: 0.9,          // 逐格衰减系数
+  // ---- 蓄力 / 跳跃规则参数（maxStep / firstCellMs / ratio）已全部改为**服务端下发**：
+  //     见 `game_start` / `game_state` 快照，客户端在 js/logic/charge.js 中通过 apply() 接收，
+  //     本地不再保留任何规则常量（避免两端漂移导致“显示 N 格、结算 M 格”）。
 
   // ---- 操作 ----
   ChargeCancelDy: 60,  // 蓄力中手指上滑超过该像素距离 = 取消本次蓄力
-
-  // ---- 对局节奏（与服务端一致；对局中以服务端消息为准） ----
-  WaveWaitMs: 12000
+  JumpCooldownMs: 700  // 落地恢复时间：期间不可再次蓄力（服务端最小间隔 500ms，正常操作不会被拒）
 };

@@ -147,12 +147,14 @@ public sealed class RoomManager : IDisposable
             if (room.Phase != RoomPhase.Waiting) return "当前不可开局";
             if (!IsHost(room, session)) return "仅房主可开局";
 
+            // 单人也能开局（单人练习 / 计时挑战）
             var onlineCount = room.Players.Count(p => p.Online);
-            if (onlineCount < 2) return "至少需要 2 名在线玩家才能开始";
+            if (onlineCount < 1) return "没有在线玩家，无法开始";
 
             var engine = new GameEngine(room, _db);
             room.Engine = engine;
-            engine.Start(); // 内部会把 Phase 置为 Playing 并广播 GameStart/倒计时
+            room.SetPhase(RoomPhase.Playing); // 同步置为对局中，避免双击/连点重复开局
+            engine.Start(); // 内部广播 GameStart 与 3-2-1 倒计时
             return null;
         }
     }

@@ -22,25 +22,36 @@ public sealed class AuthService
         _wx = wx;
     }
 
-    public async Task<LoginOutcome> LoginAsync(string code, string nickname, string avatarUrl)
+    public async Task<LoginOutcome> LoginAsync(string code, string nickname, string avatarUrl, bool wxAuthorized = false)
     {
         var wx = await _wx.Code2SessionAsync(code);
         if (string.IsNullOrEmpty(wx.OpenId))
             return new LoginOutcome(null, null, wx.Error ?? "微信登录凭证校验失败");
 
         var openId = wx.OpenId!;
+        var nick = SanitizeNickname(nickname);
 
         var user = await _db.FindUserByOpenIdAsync(openId);
         if (user is null)
         {
-            user = await _db.CreateUserAsync(openId, SanitizeNickname(nickname), avatarUrl ?? "");
+            user = await _db.CreateUserAsync(openId, nick, avatarUrl ?? "", wxAuthorized);
         }
-        else if (!string.IsNullOrEmpty(nickname))
+        else if (wxAuthorized)
         {
-            await _db.UpdateProfileAsync(user.Id, SanitizeNickname(nickname), avatarUrl ?? "");
-            user.Nickname = SanitizeNickname(nickname);
+            // 用户授权了微信头像昵称：以授权资料为准并落库（下次进来直接用库里的）
+            await _db.UpdateWxProfileAsync(user.Id, nick, avatarUrl ?? "");
+            user.Nickname = nick;
+            user.AvatarUrl = avatarUrl ?? "";
+            user.WxAuthorized = true;
+        }
+        else if (string.IsNullOrEmpty(user.Nickname))
+        {
+            // 库里没有昵称（历史数据）：用客户端兜底昵称补齐，但不标记为已授权
+            await _db.UpdateProfileAsync(user.Id, nick, avatarUrl ?? "");
+            user.Nickname = nick;
             user.AvatarUrl = avatarUrl ?? "";
         }
+        // 其余情况：保留库内资料，避免客户端兜底昵称把已授权的资料覆盖
 
         var token = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
         await _redis.SetTokenAsync(token, user.Id, TokenTtl);

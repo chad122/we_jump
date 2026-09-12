@@ -2,12 +2,14 @@
  * 路径工具：给定 GameStart 下发的 path（[{x,y}...]）与玩家所在格序号，
  * 计算本直线段安全步数 d 与当前可跳上限 n（与服务端一致，仅用于本地提示渲染）。
  */
-var cfg = require('../config.js');
+var charge = require('./charge.js');
 
-/** 可跳上限 n = min(到终点剩余格数, MaxStep)。 */
+/**
+ * 蓄力上限 n（进度环格数）：由服务端下发（charge.maxStep()），
+ * 不随“到终点的剩余距离”收窄。若蓄力超过当前直线段安全步数，会按“飞出边界”判定。
+ */
 function allowedN(path, index) {
-  var remaining = path.length - 1 - index;
-  return Math.min(remaining, cfg.MaxStep);
+  return charge.maxStep();
 }
 
 /** 到终点剩余格数。 */

@@ -8,7 +8,7 @@
 ```
 we_jump_dotnet/         服务端（.NET 8.0 + WebSocket + MySQL + Redis）
   WeJump.Api/           单项目
-    Program.cs          入口：HTTP(登录/地图) + /ws
+    Program.cs          入口：HTTP(登录/地图/我在的房间) + /ws
     GameHub.cs          WebSocket 连接与消息派发
     Models/             地图/实体/协议 DTO
     Services/           登录、房间、对局引擎、Redis、WS 会话
@@ -26,7 +26,7 @@ docs/sql/               MySQL DDL（手动执行）
 
 ## 运行与配置
 
-1. 建库：`mysql -uroot -p < docs/sql/20260906-we-jump-init.sql`（或直接执行 `docs/sql/init-ddl.sql`）。
+1. 建库：`mysql -uroot -p < docs/sql/20260906-we-jump-init.sql`（或直接执行 `docs/sql/init-ddl.sql`）；已有库按日期顺序执行 `docs/sql/` 下的增量 DDL（如 `20260912-we-jump-user-wx-authorized.sql`）。
 2. 服务端：改 `WeJump.Api/appsettings.json` 中 `WeJump.MySql/Redis/WxAppId/WxAppSecret`（微信凭证留空时登录走本地模拟，便于联调）；`dotnet run`（默认 5000 端口由 launchSettings/ASPNETCORE_URLS 决定）。
 3. 客户端：用微信开发者工具导入 `we_jump_wx/`，把 `js/config.js` 的 `HTTP_BASE/WS_BASE` 指向服务端；本地联调需关闭“合法域名校验”。
 
@@ -51,21 +51,23 @@ docs/sql/               MySQL DDL（手动执行）
 
 ## 通信协议（WebSocket，JSON 信封 `{type,data}`）
 
-客户端->服务端：`create_room` / `join_room{roomNo}` / `leave_room` / `select_map{mapId}` / `start_game` / `again` / `jump{seq,elapsedMs}` / `skip{seq}` / `ping`
-服务端->客户端：`joined` / `room_state` / `game_start` / `countdown{n}` / `wave_start{seq,players:[{seat,index,n,remaining}]}` / `wave_result{seq,results:[{seat,from,steps,index,isOut,isFinish,rank}]}` / `champion{championSeat,nickname,deadlineTs}` / `game_end{reason,ranks}` / `error`
+客户端->服务端：`create_room` / `join_room{roomNo}` / `leave_room` / `select_map{mapId}` / `start_game` / `again` / `jump{elapsedMs}` / `ping`
+服务端->客户端：`joined` / `room_state` / `game_start{mapId,mapName,durationSeconds,startTs,maxStep,firstCellMs,ratio,path,players[]}` / `countdown{n}`（n=0 表示开始，此后可自由跳跃） / `player_move{seat,from,steps,index,isOut,isFinish,rank}` / `game_state{...}`（断线重连快照，与 `game_start` 同构） / `champion{championSeat,nickname,deadlineTs}` / `game_end{reason,ranks}` / `error`
 
 ## 玩法规则的实现裁定（对 PRD 4.2/4.3 的歧义澄清）
 
-- 蓄力格累计时长 $C(k)=5000(1-0.9^k)$ ms（第 k 格 500×0.9^{k-1}）。
-- 进度条最大格数 $N=\min(\text{剩余到终点格数},6)$。
+- 蓄力格累计时长 $C(k)=3000(1-0.9^k)$ ms（第 k 格 300×0.9^{k-1}，`Utils/Charge.cs` 的 `FirstCellMs=300/Ratio=0.9`）。
+- 蓄力上限恒为 **10 格**（不再随“到终点的剩余距离”收窄）：临近拐弯/终点若蓄力过头，同样按 $s>d$ 判定**飞出边界回到起点**，因此需要精准松手（按钮进度环会提示危险）。
+- 蓄力参数（`maxStep/firstCellMs/ratio`）**全部由服务端下发**（config 常量在 `Utils/Charge.cs`，随 `game_start/game_state` 快照下发）；客户端 `js/config.js` **不再保留**任何规则常量，在 `js/logic/charge.js` 里通过 `apply()` 接收后本地预估步数（仅用于进度环/危险提示，结算始终以服务端为准）。
 - 路径按“直线段”分组，玩家从当前格直线跳跃若步数 $s$ 未超过**当前直线段安全步数 $d$**（到下一拐弯/终点格）则落在 $s$ 格处；恰好拐弯格则下一回合自动转向；恰好终点则抵达。
 - $s>d$（跳越过拐弯/终点所在直线边界）→ **飞出边界，回到起点**。
-- 每回合(wave)服务端权威结算：客户端只上报蓄力时长 `elapsedMs`，服务端反推步数并校验，防变速作弊占位。
+- **实时自由跳跃（无回合等待）**：3-2-1 倒计时后，所有玩家可各自随时蓄力松手、互不等待；客户端只上报蓄力时长 `elapsedMs`，服务端每收到一次跳跃即反推步数并**立即广播该玩家移动**（防变速作弊占位）。
+- 落地恢复：每次跳跃后有短暂冷却（客户端 700ms / 服务端最小间隔 500ms），防止“连点小跳”刷进度；蓄力越久跳得越远，单位时间收益更高。
 - 结束：首名抵达 → **冠军倒计时 10s（模式A）**；全程无人抵达且达地图硬时限 → **超时结算（模式B）**。
 
 ## MVP 范围与“后置占位”清单
 
-已实现（核心闭环）：房间/座位、选图、3-2-1 开局、五张地图与出界回起点、回合制同屏跳跃、取消(上划)、模式A/B 结算、落库、再来一局、断线自动重连恢复座位。
+已实现（核心闭环）：房间/座位、选图、3-2-1 开局、五张地图与出界回起点、回合制同屏跳跃、取消(上划)、模式A/B 结算、落库、再来一局、断线自动重连恢复座位。**支持单人开局**（PRD 原为“至少 2 人”，MVP 放宽为 1 人，便于单人练习/计时挑战）。
 
 占位（后续迭代）：微信分享卡片入口（已有分享按钮，可直达房间）、好友排行榜开放数据域（脚手架已就位）、超时踢出/挂机细化、蓄力时长窗口级反作弊。
 
