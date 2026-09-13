@@ -7,6 +7,7 @@ var state = require('../state.js');
 var charge = require('../logic/charge.js');
 var pathUtil = require('../logic/path.js');
 var avatar = require('../render/avatar.js');
+var sound = require('../audio/sound.js');
 
 function create() {
   var scene = {
@@ -276,6 +277,8 @@ function create() {
         start: Date.now(), dur: dur, isOut: m.isOut
       });
     }
+    sound.jump(m.seat === state.mySeat);   // 音效：每次跳跃一声
+    if (m.isFinish) sound.finish();        // 音效：有人抵达终点
 
     if (m.seat !== state.mySeat) return;
 
@@ -512,8 +515,8 @@ function create() {
       draw.fillRoundRect(ctx, -L.tileW / 2, -L.tileL / 2, L.tileW, L.tileL, L.tileL / 2, col);
       ctx.restore();
       var markSize = Math.max(8, Math.min(L.tileL * 0.85, cellH * 0.3));
-      if (isStart) draw.text(ctx, '起', p0.x, p0.y + 1, markSize, '#ffffff', 'center', true);
-      if (isEnd) draw.text(ctx, '终', p0.x, p0.y + 1, markSize, '#ffffff', 'center', true);
+      if (isStart) draw.text(ctx, '起', p0.x, p0.y, markSize, '#ffffff', 'center', true);
+      if (isEnd) draw.text(ctx, '终', p0.x, p0.y, markSize, '#ffffff', 'center', true);
       // 拐弯箭头：先收集，所有格子画完后再画，避免被下一格的缝隙圈裁掉
       if (j < path.length - 1 && j > 0) {
         var prev = path[j - 1], cur = path[j], next = path[j + 1];
@@ -707,7 +710,7 @@ function create() {
     draw.fillRoundRect(ctx, m.x, m.y + m.side - footH, m.side, footH, 0, 'rgba(255,255,255,0.10)');
     var me = this.players[state.mySeat];
     var myPos = me ? (me.finished ? path.length : (me.index + 1)) : 0;
-    draw.text(ctx, '第 ' + myPos + ' / ' + path.length + ' 格', m.x + m.side / 2, m.y + m.side - footH / 2 + 1, 10, '#ffffff', 'center');
+    draw.text(ctx, '第 ' + myPos + ' / ' + path.length + ' 格', m.x + m.side / 2, m.y + m.side - footH / 2, 10, '#ffffff', 'center');
   };
 
   /**

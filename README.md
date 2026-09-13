@@ -76,3 +76,4 @@ docs/sql/               MySQL DDL（手动执行）
 - 房间与对局均为服务端内存态（MVP 不落库房间），重启用 Redis 令牌鉴权。
 - 地图路径为服务端权威，开局 `game_start.path` 下发；客户端仅本地渲染。
 - 对局结束写入 `game_record`/`game_player_result`，供排行榜等使用。
+- 音频：客户端用 WebAudio（`wx.createWebAudioContext`）**实时合成，不依赖任何音频资源文件**（`js/audio/sound.js`）——菜单/房间舒缓 BGM、对局中紧迫 BGM（带低音鼓点）+ 每次跳跃音效 + 有人抵达终点的音效；首次触摸后解锁、切后台暂停并在回前台续播，平台不支持 WebAudio 时静默降级。

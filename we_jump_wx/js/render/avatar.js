@@ -63,8 +63,8 @@ function drawAvatar(ctx, x, y, r, url, nickname, color, char) {
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fill();
-  // baseline=middle 时汉字视觉重心略偏下，上移 1px 做光学居中
-  draw.text(ctx, char || initialOf(nickname), x, y - 1, Math.max(9, r * 1.05), '#ffffff', 'center', true);
+  // 文字垂直居中由 draw.text 按字形墨迹精确处理
+  draw.text(ctx, char || initialOf(nickname), x, y, Math.max(9, r * 1.05), '#ffffff', 'center', true);
 }
 
 /** 取第一个“字”：emoji（代理对）按整字取，避免截出半个字符。 */

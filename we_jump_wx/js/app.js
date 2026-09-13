@@ -5,6 +5,7 @@ var net = require('./net/net.js');
 var state = require('./state.js');
 var cfg = require('./config.js');
 var avatarUtil = require('./render/avatar.js');
+var sound = require('./audio/sound.js');
 
 var sceneMain = require('./scenes/main.js');
 var sceneRoom = require('./scenes/room.js');
@@ -46,6 +47,10 @@ App.start = function () {
   this.registerTouch();
   this.loop = this.loop.bind(this);
   this.loop();
+
+  // 切后台暂停音频，回前台续播
+  wx.onHide(function () { sound.pause(); });
+  wx.onShow(function () { sound.resume(); });
 
   this.bootstrapLogin();
 };
@@ -272,6 +277,8 @@ App.showScene = function (name, data) {
   var s = factory.create();
   s.enter(Object.assign({ app: this, w: this.w, h: this.h }, data || {}));
   this.scene = s;
+  // 音频：对局中用紧迫 BGM，其余场景（菜单/房间/结算）用默认舒缓 BGM
+  sound.bgm(name === 'game' ? 'game' : 'menu');
 };
 
 App.currentSceneName = function () {
@@ -352,6 +359,7 @@ App.onServerMessage = function (type, data) {
 App.registerTouch = function () {
   var self = this;
   wx.onTouchStart(function (e) {
+    sound.init();   // 首次用户手势后才能出声
     if (!e.touches || e.touches.length === 0) return;
     var t = e.touches[0];
     var s = self.scene;
