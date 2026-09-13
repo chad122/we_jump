@@ -32,12 +32,12 @@ app.MapPost("/api/auth/login", async (JsonElement body, AuthService auth) =>
     var code = body.TryGetProperty("code", out var c) ? c.GetString() ?? "" : "";
     var nickname = body.TryGetProperty("nickname", out var n) ? n.GetString() ?? "" : "";
     var avatarUrl = body.TryGetProperty("avatarUrl", out var a) ? a.GetString() ?? "" : "";
-    // authorized = true 表示这次带上的是微信授权拿到的头像昵称（会覆盖库内资料并标记授权）
-    var authorized = body.TryGetProperty("authorized", out var w) && w.ValueKind == JsonValueKind.True;
+    // 头像文字（一个字，头像展示用）；客户端要求建房/加房前必填
+    var avatarChar = body.TryGetProperty("avatarChar", out var ac) ? ac.GetString() ?? "" : "";
     if (string.IsNullOrEmpty(code))
         return Results.BadRequest(new { code = "bad_request", msg = "缺少 code" });
 
-    var outcome = await auth.LoginAsync(code, nickname, avatarUrl, authorized);
+    var outcome = await auth.LoginAsync(code, nickname, avatarUrl, avatarChar);
     if (outcome.User == null || outcome.Token == null)
         return Results.Json(new { code = "wx_login_failed", msg = outcome.Error ?? "微信登录凭证校验失败" }, statusCode: 401);
 
@@ -49,7 +49,7 @@ app.MapPost("/api/auth/login", async (JsonElement body, AuthService auth) =>
             id = outcome.User.Id,
             nickname = outcome.User.Nickname,
             avatarUrl = outcome.User.AvatarUrl,
-            wxAuthorized = outcome.User.WxAuthorized
+            avatarChar = outcome.User.AvatarChar
         }
     });
 });

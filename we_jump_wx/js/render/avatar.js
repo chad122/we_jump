@@ -45,9 +45,10 @@ function shortName(nickname, max) {
  * @param url 头像地址（可空）
  * @param nickname 昵称（生成头像用）
  * @param color 主色（生成头像背景）
+ * @param char 头像文字（一个字，可空；优先于昵称首字，设置后不再加载图片）
  */
-function drawAvatar(ctx, x, y, r, url, nickname, color) {
-  var img = getImage(url);
+function drawAvatar(ctx, x, y, r, url, nickname, color, char) {
+  var img = char ? null : getImage(url);
   if (img) {
     ctx.save();
     ctx.beginPath();
@@ -62,12 +63,22 @@ function drawAvatar(ctx, x, y, r, url, nickname, color) {
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fill();
-  draw.text(ctx, initialOf(nickname), x, y + 1, Math.max(9, r * 1.05), '#ffffff', 'center', true);
+  // baseline=middle 时汉字视觉重心略偏下，上移 1px 做光学居中
+  draw.text(ctx, char || initialOf(nickname), x, y - 1, Math.max(9, r * 1.05), '#ffffff', 'center', true);
+}
+
+/** 取第一个“字”：emoji（代理对）按整字取，避免截出半个字符。 */
+function firstChar(s) {
+  var t = (s || '').replace(/^\s+/, '');
+  if (!t) return '';
+  var c = t.charCodeAt(0);
+  return (c >= 0xd800 && c <= 0xdbff && t.length > 1) ? t.slice(0, 2) : t.charAt(0);
 }
 
 module.exports = {
   getImage: getImage,
   initialOf: initialOf,
+  firstChar: firstChar,
   shortName: shortName,
   drawAvatar: drawAvatar
 };

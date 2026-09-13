@@ -78,7 +78,7 @@ function create() {
     var items = [];
     if (isHost) {
       if (ended) {
-        items.push({ label: '再来一局', bg: '#12b76a', tap: function () { scene.app.send('again', {}); } });
+        items.push({ label: '再来一局', bg: '#12b76a', tap: function () { scene.app.send('play_again', {}); } });
       } else {
         items.push({ label: '开始游戏', bg: '#12b76a', tap: function () { scene.app.send('start_game', {}); } });
         items.push({ label: '选择地图', bg: '#4a7dff', tap: function () { scene.pickMap(); } });
@@ -205,7 +205,9 @@ function create() {
     if (!state.room) return;
 
     var pad = state.safeTop || 0;
-    var roomY = Math.max(56, pad + 16);                  // 避开刘海/状态栏
+    var capsuleB = state.capsuleBottom || 0;
+    // 房间号是居中大字号，会横跨到右上角胶囊按钮区域，所以下移到胶囊下方
+    var roomY = Math.max(pad + 18, capsuleB + 16);   // 28px 字号，上下各留 14px 不碰胶囊
     draw.text(ctx, '房间号 ' + state.room.roomNo, w / 2, roomY, 28, '#ffffff', 'center', true);
 
     var mapName = '未知地图';
@@ -221,7 +223,7 @@ function create() {
     var rowX = w * 0.08, rowW = w * 0.84;
     var listTop = mapY + 30;
     var btnTop = this.buttons.length ? this.buttons[0].y : h - 60;
-    var avail = Math.max(150, btnTop - listTop - 10);
+    var avail = Math.max(150, btnTop - listTop - 20);
     var pitch = Math.max(26, Math.min(38, avail / maxSlots));   // 自适应行高，避免与下方按钮重叠
     var rowH = pitch - 6;
     var rowR = Math.min(14, rowH / 2);
@@ -256,7 +258,7 @@ function create() {
       // 头像（圆环用座位色，未加载时用昵称首字）
       var ar = Math.max(9, rowH * 0.34);
       var ax = rowX + rowH / 2 + 2;
-      avatar.drawAvatar(ctx, ax, py, ar, p.avatarUrl, p.nickname, state.seatColor(p.seat));
+      avatar.drawAvatar(ctx, ax, py, ar, p.avatarUrl, p.nickname, state.seatColor(p.seat), p.avatarChar);
       ctx.strokeStyle = state.seatColor(p.seat);
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(ax, py, ar + 1.5, 0, Math.PI * 2); ctx.stroke();

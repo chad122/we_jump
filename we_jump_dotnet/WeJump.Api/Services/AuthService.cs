@@ -22,7 +22,7 @@ public sealed class AuthService
         _wx = wx;
     }
 
-    public async Task<LoginOutcome> LoginAsync(string code, string nickname, string avatarUrl, bool wxAuthorized = false)
+    public async Task<LoginOutcome> LoginAsync(string code, string nickname, string avatarUrl, string avatarChar = "")
     {
         var wx = await _wx.Code2SessionAsync(code);
         if (string.IsNullOrEmpty(wx.OpenId))
@@ -30,28 +30,28 @@ public sealed class AuthService
 
         var openId = wx.OpenId!;
         var nick = SanitizeNickname(nickname);
+        var avChar = SanitizeAvatarChar(avatarChar);
 
         var user = await _db.FindUserByOpenIdAsync(openId);
         if (user is null)
         {
-            user = await _db.CreateUserAsync(openId, nick, avatarUrl ?? "", wxAuthorized);
-        }
-        else if (wxAuthorized)
-        {
-            // 用户授权了微信头像昵称：以授权资料为准并落库（下次进来直接用库里的）
-            await _db.UpdateWxProfileAsync(user.Id, nick, avatarUrl ?? "");
-            user.Nickname = nick;
-            user.AvatarUrl = avatarUrl ?? "";
-            user.WxAuthorized = true;
+            user = await _db.CreateUserAsync(openId, nick, avatarUrl ?? "", avChar);
         }
         else if (string.IsNullOrEmpty(user.Nickname))
         {
-            // 库里没有昵称（历史数据）：用客户端兜底昵称补齐，但不标记为已授权
+            // 库里没有昵称（历史数据）：用客户端兜底昵称补齐
             await _db.UpdateProfileAsync(user.Id, nick, avatarUrl ?? "");
             user.Nickname = nick;
             user.AvatarUrl = avatarUrl ?? "";
         }
-        // 其余情况：保留库内资料，避免客户端兜底昵称把已授权的资料覆盖
+        // 其余情况：保留库内资料，避免客户端兜底昵称把库内资料覆盖
+
+        // 头像文字（一个字）：用户设置过就按新的存库；空值不覆盖已有
+        if (avChar.Length > 0 && avChar != user.AvatarChar)
+        {
+            await _db.UpdateAvatarCharAsync(user.Id, avChar);
+            user.AvatarChar = avChar;
+        }
 
         var token = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
         await _redis.SetTokenAsync(token, user.Id, TokenTtl);
@@ -66,5 +66,14 @@ public sealed class AuthService
         var n = (nickname ?? "").Trim();
         if (string.IsNullOrEmpty(n) || n.Length > 32) n = "玩家" + Random.Shared.Next(1000, 9999);
         return n;
+    }
+
+    /// <summary>头像文字：只取第一个字（emoji/组合字符按整字取），过长则截断到列宽。</summary>
+    private static string SanitizeAvatarChar(string? avatarChar)
+    {
+        var t = (avatarChar ?? "").Trim();
+        if (t.Length == 0) return "";
+        var first = System.Globalization.StringInfo.GetNextTextElement(t);
+        return first.Length > 8 ? first[..8] : first;
     }
 }

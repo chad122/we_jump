@@ -49,9 +49,26 @@ function stepsForMs(ms, n) {
   return s;
 }
 
+/**
+ * 蓄力时长的**连续**进度（0..1，无极渲染用）：
+ * 把进度条均匀分成 maxStep 段，每段对应一格；格内按耗时线性插值，因此不会一格一格地跳。
+ */
+function progressFor(ms, n) {
+  var limit = maxStep();
+  var max = (n > 0 ? Math.min(n, limit) : limit);
+  if (!(ms > 0) || !isFinite(cumTime(1)) || max < 1) return 0;
+  var k = 0;
+  while (k < max && ms >= cumTime(k + 1)) k++;
+  if (k >= max) return 1;
+  var base = cumTime(k), next = cumTime(k + 1);
+  var within = (next > base) ? (ms - base) / (next - base) : 0;
+  return Math.max(0, Math.min(1, (k + within) / max));
+}
+
 module.exports = {
   apply: apply,
   maxStep: maxStep,
   cumTime: cumTime,
-  stepsForMs: stepsForMs
+  stepsForMs: stepsForMs,
+  progressFor: progressFor
 };

@@ -19,6 +19,8 @@ public sealed class WsSession : IAsyncDisposable
     public long UserId { get; set; }
     public string? Nickname { get; set; }
     public string? AvatarUrl { get; set; }
+    /// <summary>头像文字（一个字），透传到房间成员/对局快照。</summary>
+    public string? AvatarChar { get; set; }
 
     public WsSession(WebSocket ws)
     {

@@ -16,8 +16,6 @@ public sealed class GameEngine
 {
     /// <summary>服务端允许的最小跳跃间隔(ms)：防止“连点小跳”刷进度；客户端用 700ms，正常操作不会被拒。</summary>
     private const double JumpCooldownMs = 500;
-    /// <summary>冠军产生后的收尾倒计时（秒）。</summary>
-    private const int ChampionCountdownSeconds = 10;
 
     private readonly Room _room;
     private readonly Db _db;
@@ -30,10 +28,8 @@ public sealed class GameEngine
     private DateTime _gameStartUtc;
     private long _startTs;
     private int _arrivalCounter;
-    private DateTime? _championDeadline;
     private int _championSeat = -1;
     private string _championNickname = "";
-    private bool _championNotified;
     private EndReason _reason = EndReason.None;
     private Task? _runTask;
 
@@ -53,7 +49,6 @@ public sealed class GameEngine
     public bool SubmitJump(int seat, double elapsedMs)
     {
         object movePayload;
-        object? championPayload = null;
 
         lock (_lock)
         {
@@ -94,12 +89,11 @@ public sealed class GameEngine
                     _arrivalCounter++;
                     p.ArrivalOrder = _arrivalCounter;
                     rank = p.ArrivalOrder;
-                    if (_championDeadline == null)
+                    // 首名抵达者即本局冠军：RunAsync 的判定循环收到后立即结算（无倒计时）
+                    if (_championSeat < 0)
                     {
                         _championSeat = p.Seat;
                         _championNickname = p.Nickname;
-                        _championDeadline = now.AddSeconds(ChampionCountdownSeconds);
-                        _championNotified = false;
                     }
                 }
             }
@@ -117,21 +111,9 @@ public sealed class GameEngine
                 isFinish,
                 rank
             };
-
-            if (_championDeadline != null && !_championNotified)
-            {
-                _championNotified = true;
-                championPayload = new
-                {
-                    championSeat = _championSeat,
-                    nickname = _championNickname,
-                    deadlineTs = new DateTimeOffset(_championDeadline.Value).ToUnixTimeMilliseconds()
-                };
-            }
         }
 
         _room.Broadcast(Msg.PlayerMove, movePayload);
-        if (championPayload != null) _room.Broadcast(Msg.Champion, championPayload);
         return true;
     }
 
@@ -195,10 +177,6 @@ public sealed class GameEngine
     /// <summary>对局状态快照：game_start 与 game_state 同构，客户端复用同一套同步逻辑。</summary>
     private object BuildStateData()
     {
-        long? championDeadline = _championDeadline is DateTime cd
-            ? new DateTimeOffset(cd).ToUnixTimeMilliseconds()
-            : (long?)null;
-
         return new
         {
             mapId = _map.Id,
@@ -209,14 +187,12 @@ public sealed class GameEngine
             maxStep = Charge.MaxStep,
             firstCellMs = Charge.FirstCellMs,
             ratio = Charge.Ratio,
-            championSeat = _championSeat,
-            championName = _championNickname,
-            championDeadline,
             players = _room.Players.Select(p => new
             {
                 seat = p.Seat,
                 nickname = p.Nickname,
                 avatarUrl = p.AvatarUrl,
+                avatarChar = p.AvatarChar,
                 index = p.Index,
                 finished = p.Finished,
                 rank = p.ArrivalOrder
@@ -229,9 +205,10 @@ public sealed class GameEngine
     {
         if (_room.Aborted) return true;
 
-        if (_championDeadline is DateTime cd && DateTime.UtcNow >= cd)
+        // 模式A：首名抵达终点，本局立即结束（未完成者按剩余格数结算名次）
+        if (_championSeat >= 0)
         {
-            _reason = EndReason.ChampionCountdown;
+            _reason = EndReason.ChampionArrived;
             return true;
         }
         if (DateTime.UtcNow - _gameStartUtc >= TimeSpan.FromSeconds(_map.DurationSeconds))
@@ -244,7 +221,8 @@ public sealed class GameEngine
         bool anyActive = all.Any(p => p.Online && !p.Finished);
         if (!anyActive)
         {
-            _reason = all.Any(p => p.Finished) ? EndReason.ChampionCountdown : EndReason.MapTimeout;
+            // 无人在局（掉线/退出）：按地图超时结算，避免房间永远卡在对局中
+            _reason = EndReason.MapTimeout;
             return true;
         }
         return false;
@@ -287,13 +265,15 @@ public sealed class GameEngine
             nickname = p.Nickname,
             index = p.Index,
             finished = p.Finished,
-            rank = p.FinalRank
+            rank = p.FinalRank,
+            // 未完成玩家的剩余格数（终点为最后一格），供结算弹窗展示“还差几格”
+            remain = p.Finished ? 0 : Math.Max(0, _map.Path.Count - 1 - p.Index)
         }).ToList();
 
         _room.Broadcast(Msg.GameEnd, new
         {
             reason = (int)_reason,
-            reasonText = _reason == EndReason.ChampionCountdown ? "冠军产生，倒计时结束" : "本轮无人抵达终点，按进度结算",
+            reasonText = _reason == EndReason.ChampionArrived ? "冠军产生，本局结束" : "本轮无人抵达终点，按进度结算",
             ranks,
             championSeat = _championSeat
         });

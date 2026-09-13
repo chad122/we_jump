@@ -9,7 +9,7 @@ public static class Msg
     public const string LeaveRoom = "leave_room";
     public const string SelectMap = "select_map";
     public const string StartGame = "start_game";
-    public const string Again = "again";
+    public const string PlayAgain = "play_again";   // 结算弹窗点“再来一局”（全员就绪后按同一张地图重开）
     public const string Jump = "jump";     // 实时跳跃上报 {elapsedMs}
     public const string Ping = "ping";
 
@@ -20,7 +20,6 @@ public static class Msg
     public const string GameState = "game_state";    // 对局状态快照（断线重连同步）
     public const string Countdown = "countdown";     // 3-2-1；n=0 表示开始（此后可自由跳跃）
     public const string PlayerMove = "player_move";  // 某位玩家的一次移动结算
-    public const string Champion = "champion";       // 出现冠军，进入 10s 倒计时
     public const string GameEnd = "game_end";        // 对局结束（附名次）
     public const string Error = "error";
 }
@@ -32,7 +31,11 @@ public sealed class RoomPlayerDto
     public long UserId { get; set; }
     public string Nickname { get; set; } = "";
     public string AvatarUrl { get; set; } = "";
+    /// <summary>头像文字（一个字，头像展示用）。</summary>
+    public string AvatarChar { get; set; } = "";
     public bool Online { get; set; }
+    /// <summary>结算弹窗里是否已点“再来一局”。</summary>
+    public bool Ready { get; set; }
 }
 
 /// <summary>房间快照。</summary>

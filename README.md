@@ -26,7 +26,7 @@ docs/sql/               MySQL DDL（手动执行）
 
 ## 运行与配置
 
-1. 建库：`mysql -uroot -p < docs/sql/20260906-we-jump-init.sql`（或直接执行 `docs/sql/init-ddl.sql`）；已有库按日期顺序执行 `docs/sql/` 下的增量 DDL（如 `20260912-we-jump-user-wx-authorized.sql`）。
+1. 建库：`mysql -uroot -p < docs/sql/20260906-we-jump-init.sql`（或直接执行 `docs/sql/init-ddl.sql`）；已有库按日期顺序执行 `docs/sql/` 下的增量 DDL（如 `20260913-we-jump-user-avatar-char.sql`、`20260913-we-jump-user-drop-wx-authorized.sql`）。
 2. 服务端：改 `WeJump.Api/appsettings.json` 中 `WeJump.MySql/Redis/WxAppId/WxAppSecret`（微信凭证留空时登录走本地模拟，便于联调）；`dotnet run`（默认 5000 端口由 launchSettings/ASPNETCORE_URLS 决定）。
 3. 客户端：用微信开发者工具导入 `we_jump_wx/`，把 `js/config.js` 的 `HTTP_BASE/WS_BASE` 指向服务端；本地联调需关闭“合法域名校验”。
 
@@ -51,8 +51,8 @@ docs/sql/               MySQL DDL（手动执行）
 
 ## 通信协议（WebSocket，JSON 信封 `{type,data}`）
 
-客户端->服务端：`create_room` / `join_room{roomNo}` / `leave_room` / `select_map{mapId}` / `start_game` / `again` / `jump{elapsedMs}` / `ping`
-服务端->客户端：`joined` / `room_state` / `game_start{mapId,mapName,durationSeconds,startTs,maxStep,firstCellMs,ratio,path,players[]}` / `countdown{n}`（n=0 表示开始，此后可自由跳跃） / `player_move{seat,from,steps,index,isOut,isFinish,rank}` / `game_state{...}`（断线重连快照，与 `game_start` 同构） / `champion{championSeat,nickname,deadlineTs}` / `game_end{reason,ranks}` / `error`
+客户端->服务端：`create_room` / `join_room{roomNo}` / `leave_room`（**任何阶段都真正退出房间并释放座位**，只有断线才保留座位用于重连） / `select_map{mapId}` / `start_game` / `play_again`（结算弹窗点“再来一局”，全员就绪后按同一张地图重开） / `jump{elapsedMs}` / `ping`
+服务端->客户端：`joined` / `room_state{...,players[{seat,nickname,avatarUrl,avatarChar,online,ready}]}`（结算阶段用于展示“已准备”人数）/ `game_start{mapId,mapName,durationSeconds,startTs,maxStep,firstCellMs,ratio,path,players[{seat,nickname,avatarUrl,avatarChar,index,finished,rank}]}` / `countdown{n}`（n=0 表示开始，此后可自由跳跃） / `player_move{seat,from,steps,index,isOut,isFinish,rank}` / `game_state{...}`（断线重连快照，与 `game_start` 同构） / `game_end{reason,reasonText,ranks[{seat,nickname,index,finished,rank,remain}]}`（`remain` = 未完成玩家的剩余格数，已抵达为 0）/ `error`
 
 ## 玩法规则的实现裁定（对 PRD 4.2/4.3 的歧义澄清）
 
@@ -63,7 +63,7 @@ docs/sql/               MySQL DDL（手动执行）
 - $s>d$（跳越过拐弯/终点所在直线边界）→ **飞出边界，回到起点**。
 - **实时自由跳跃（无回合等待）**：3-2-1 倒计时后，所有玩家可各自随时蓄力松手、互不等待；客户端只上报蓄力时长 `elapsedMs`，服务端每收到一次跳跃即反推步数并**立即广播该玩家移动**（防变速作弊占位）。
 - 落地恢复：每次跳跃后有短暂冷却（客户端 700ms / 服务端最小间隔 500ms），防止“连点小跳”刷进度；蓄力越久跳得越远，单位时间收益更高。
-- 结束：首名抵达 → **冠军倒计时 10s（模式A）**；全程无人抵达且达地图硬时限 → **超时结算（模式B）**。
+- 结束：**首名抵达终点立即结算（模式A）**（无 10s 倒计时缓冲）；全程无人抵达且达地图硬时限 → **超时结算（模式B）**。
 
 ## MVP 范围与“后置占位”清单
 

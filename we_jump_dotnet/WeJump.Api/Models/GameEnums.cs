@@ -12,6 +12,6 @@ public enum RoomPhase
 public enum EndReason
 {
     None = 0,
-    ChampionCountdown = 1, // 模式A：冠军倒计时结束
-    MapTimeout = 2         // 模式B：地图超时强制结束
+    ChampionArrived = 1, // 模式A：首名抵达终点，立即结算
+    MapTimeout = 2       // 模式B：地图超时强制结束
 }

@@ -9,6 +9,8 @@ public sealed class RoomPlayer
     public long UserId { get; init; }
     public string Nickname { get; set; } = "";
     public string AvatarUrl { get; set; } = "";
+    /// <summary>头像文字（一个字，头像展示用）。</summary>
+    public string AvatarChar { get; set; } = "";
     public WsSession? Session { get; set; }   // null 表示当前离线
 
     // ---- 以下为“本局运行时”状态，每次开局重置 ----
@@ -18,6 +20,7 @@ public sealed class RoomPlayer
     public int OutCount = 0;
     public int ArrivalOrder = 0; // 抵达终点次序（1..n），0 = 未抵达
     public int FinalRank = 0;    // 本局最终名次（结算时写入）
+    public bool Ready = false;   // 结算弹窗里是否已点“再来一局”
 
     public bool Online => Session != null && !Session.IsClosed;
 
@@ -27,7 +30,9 @@ public sealed class RoomPlayer
         UserId = UserId,
         Nickname = Nickname,
         AvatarUrl = AvatarUrl,
-        Online = Online
+        AvatarChar = AvatarChar,
+        Online = Online,
+        Ready = Ready
     };
 }
 
@@ -81,6 +86,7 @@ public sealed class Room
                 UserId = session.UserId,
                 Nickname = session.Nickname ?? "玩家",
                 AvatarUrl = session.AvatarUrl ?? "",
+                AvatarChar = session.AvatarChar ?? "",
                 Session = session
             };
             _bySeat[seat] = p;
@@ -109,6 +115,7 @@ public sealed class Room
                 p.Session = session;
                 p.Nickname = session.Nickname ?? p.Nickname;
                 p.AvatarUrl = session.AvatarUrl ?? p.AvatarUrl;
+                p.AvatarChar = session.AvatarChar ?? p.AvatarChar;
             }
         }
     }
@@ -131,6 +138,32 @@ public sealed class Room
     public void SetPhase(RoomPhase phase)
     {
         lock (_sync) Phase = phase;
+    }
+
+    /// <summary>清空所有人“再来一局”的就绪标记（新一局开始时调用）。</summary>
+    public void ResetReady()
+    {
+        lock (_sync) foreach (var p in _bySeat.Values) p.Ready = false;
+    }
+
+    /// <summary>全部在线玩家是否都已点“再来一局”（至少 1 人）。</summary>
+    public bool AllOnlineReady()
+    {
+        lock (_sync)
+        {
+            var online = _bySeat.Values.Where(p => p.Online).ToList();
+            return online.Count > 0 && online.All(p => p.Ready);
+        }
+    }
+
+    /// <summary>在线人数 / 已就绪人数（用于弹窗提示）。</summary>
+    public (int online, int ready) ReadyStats()
+    {
+        lock (_sync)
+        {
+            var online = _bySeat.Values.Where(p => p.Online).ToList();
+            return (online.Count, online.Count(p => p.Ready));
+        }
     }
 
     public RoomDto ToDto()

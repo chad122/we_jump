@@ -31,12 +31,21 @@ public sealed class RoomManager : IDisposable
         lock (_lock) return _userRoom.TryGetValue(userId, out var no) ? GetRoomByNo(no) : null;
     }
 
-    /// <summary>创建房间（创建者自动成为房主）。返回 null 表示已在其他房间。</summary>
+    /// <summary>
+    /// 创建房间（创建者自动成为房主）。返回 null 表示已在其他房间。
+    /// 若映射到的房间已不存在、自己已不在其中，或座位并非由当前连接持有（重开小程序/已换连接），
+    /// 视为残留座位先让出，避免“离开房间”后一直提示已在其他房间。
+    /// </summary>
     public Room? CreateRoom(WsSession session)
     {
         lock (_lock)
         {
-            if (_userRoom.ContainsKey(session.UserId)) return null;
+            if (_userRoom.ContainsKey(session.UserId))
+            {
+                var mine = GetRoomOfUser(session.UserId)?.FindByUser(session.UserId);
+                if (mine != null && mine.Session == session) return null;
+                LeaveLocked(session.UserId);
+            }
 
             string no;
             do { no = Random.Shared.Next(100000, 999999).ToString(); }
@@ -79,30 +88,27 @@ public sealed class RoomManager : IDisposable
         }
     }
 
-    /// <summary>离开房间。等待阶段移除成员；对局中仅断开（不影响本局结算）。</summary>
+    /// <summary>
+    /// 主动离开房间：不分阶段都真正退出（移除成员 + 解除“用户→房间”映射），否则对局中/结算弹窗里
+    /// 离开后仍会被判定为“已在其他房间”，无法再创建或加入新房间。
+    /// 断线且需保留座位以便重连的情形走 <see cref="OnSessionClosed"/>，不受此处影响。
+    /// </summary>
     public void LeaveRoom(WsSession session)
     {
-        lock (_lock)
-        {
-            var room = GetRoomOfUser(session.UserId);
-            if (room == null) return;
+        lock (_lock) LeaveLocked(session.UserId);
+    }
 
-            var p = room.FindByUser(session.UserId);
-            if (p == null) return;
+    /// <summary>退出房间并回收：成员清空时连房间一起移除（对局中的引擎见 Aborted 后自行收尾）。需在 _lock 内调用。</summary>
+    private void LeaveLocked(long userId)
+    {
+        var room = GetRoomOfUser(userId);
+        _userRoom.Remove(userId);              // 兜底：房间已被 Sweep 清理时也要清掉残留映射
+        var p = room?.FindByUser(userId);
+        if (room == null || p == null) return;
 
-            if (room.Phase == RoomPhase.Waiting)
-            {
-                room.RemovePlayer(p.Seat);
-                _userRoom.Remove(session.UserId);
-                if (room.Aborted) _rooms.Remove(room.RoomNo);
-                else room.Broadcast(Msg.RoomState, room.ToDto());
-            }
-            else
-            {
-                room.DetachSession(p.Seat);
-                // 对局中掉线：保留座位与进度，引擎按“离线”处理为挂机
-            }
-        }
+        room.RemovePlayer(p.Seat);
+        if (room.Aborted) _rooms.Remove(room.RoomNo);
+        else room.Broadcast(Msg.RoomState, room.ToDto());
     }
 
     /// <summary>连接断开时的统一入口（不区分阶段，仅摘除连接）。</summary>
@@ -153,23 +159,39 @@ public sealed class RoomManager : IDisposable
 
             var engine = new GameEngine(room, _db);
             room.Engine = engine;
+            room.ResetReady();               // 防御：开局时清空上一局残留的“已准备”标记
             room.SetPhase(RoomPhase.Playing); // 同步置为对局中，避免双击/连点重复开局
             engine.Start(); // 内部广播 GameStart 与 3-2-1 倒计时
             return null;
         }
     }
 
-    public string? Again(WsSession session)
+    /// <summary>
+    /// 结算弹窗点“再来一局”：标记自己已就绪；当**全部在线玩家**都就绪时，
+    /// 直接用同一张地图重开一局（不再回等待房，也不能换图）。
+    /// </summary>
+    public string? PlayAgain(WsSession session)
     {
         lock (_lock)
         {
             var room = GetRoomOfUser(session.UserId);
             if (room == null) return "未加入房间";
-            if (room.Phase != RoomPhase.Ended) return "对局尚未结束";
-            if (!IsHost(room, session)) return "仅房主可再来一局";
+            if (room.Phase != RoomPhase.Ended) return null;   // 已经开了/已回等待房：幂等忽略
 
-            room.SetPhase(RoomPhase.Waiting);
+            var p = room.FindByUser(session.UserId);
+            if (p == null) return "未加入房间";
+
+            p.Ready = true;
+            var stats = room.ReadyStats();
             room.Broadcast(Msg.RoomState, room.ToDto());
+            if (stats.ready < stats.online || stats.online < 1) return null;   // 还要等其他人
+
+            room.ResetReady();
+            room.Broadcast(Msg.RoomState, room.ToDto());   // 让客户端清掉上一局的“已准备”标记
+            var engine = new GameEngine(room, _db);
+            room.Engine = engine;
+            room.SetPhase(RoomPhase.Playing);   // 先置对局中，避免重复开局
+            engine.Start();                     // 同一张地图（room.Map 未变）
             return null;
         }
     }

@@ -36,7 +36,8 @@ public sealed class GameHub
         {
             UserId = user.Id,
             Nickname = user.Nickname,
-            AvatarUrl = user.AvatarUrl
+            AvatarUrl = user.AvatarUrl,
+            AvatarChar = user.AvatarChar
         };
 
         try
@@ -125,9 +126,9 @@ public sealed class GameHub
                 if (err != null) SendError(session, err);
                 break;
             }
-            case Msg.Again:
+            case Msg.PlayAgain:
             {
-                var err = _manager.Again(session);
+                var err = _manager.PlayAgain(session);
                 if (err != null) SendError(session, err);
                 break;
             }

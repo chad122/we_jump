@@ -7,8 +7,8 @@ public sealed class User
     public string OpenId { get; set; } = "";
     public string Nickname { get; set; } = "";
     public string AvatarUrl { get; set; } = "";
-    /// <summary>是否已授权微信头像昵称（已授权则资料以库为准，不再被客户端兜底值覆盖）。</summary>
-    public bool WxAuthorized { get; set; }
+    /// <summary>头像文字（一个字，作为头像展示；空则由昵称首字兜底）。</summary>
+    public string AvatarChar { get; set; } = "";
 }
 
 /// <summary>对局主记录（每一局一条）。</summary>

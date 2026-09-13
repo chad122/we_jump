@@ -16,42 +16,42 @@ public sealed class Db
 
     public async Task<User?> FindUserByOpenIdAsync(string openId)
     {
-        const string sql = @"SELECT id, open_id AS OpenId, nickname, avatar_url AS AvatarUrl, wx_authorized AS WxAuthorized
+        const string sql = @"SELECT id, open_id AS OpenId, nickname, avatar_url AS AvatarUrl, avatar_char AS AvatarChar
                              FROM `user` WHERE open_id = @openId LIMIT 1";
         using var c = Open();
         return await c.QueryFirstOrDefaultAsync<User>(sql, new { openId });
     }
 
-    public async Task<User> CreateUserAsync(string openId, string nickname, string avatarUrl, bool wxAuthorized = false)
+    public async Task<User> CreateUserAsync(string openId, string nickname, string avatarUrl, string avatarChar = "")
     {
-        const string sql = @"INSERT INTO `user`(open_id, nickname, avatar_url, wx_authorized)
-                             VALUES(@openId, @nickname, @avatarUrl, @wxAuthorized);
+        const string sql = @"INSERT INTO `user`(open_id, nickname, avatar_url, avatar_char)
+                             VALUES(@openId, @nickname, @avatarUrl, @avatarChar);
                              SELECT LAST_INSERT_ID();";
         using var c = Open();
-        var id = await c.ExecuteScalarAsync<long>(sql, new { openId, nickname, avatarUrl, wxAuthorized });
-        return new User { Id = id, OpenId = openId, Nickname = nickname, AvatarUrl = avatarUrl, WxAuthorized = wxAuthorized };
+        var id = await c.ExecuteScalarAsync<long>(sql, new { openId, nickname, avatarUrl, avatarChar });
+        return new User { Id = id, OpenId = openId, Nickname = nickname, AvatarUrl = avatarUrl, AvatarChar = avatarChar };
     }
 
     public async Task<User?> FindUserByIdAsync(long id)
     {
-        const string sql = @"SELECT id, open_id AS OpenId, nickname, avatar_url AS AvatarUrl, wx_authorized AS WxAuthorized
+        const string sql = @"SELECT id, open_id AS OpenId, nickname, avatar_url AS AvatarUrl, avatar_char AS AvatarChar
                              FROM `user` WHERE id = @id LIMIT 1";
         using var c = Open();
         return await c.QueryFirstOrDefaultAsync<User>(sql, new { id });
     }
 
-    /// <summary>写回一次昵称头像（不改变授权标记；仅用于库里昵称为空的历史数据补齐）。</summary>
+    /// <summary>写回玩家选择的头像文字（一个字）。</summary>
+    public async Task UpdateAvatarCharAsync(long id, string avatarChar)
+    {
+        const string sql = @"UPDATE `user` SET avatar_char = @avatarChar WHERE id = @id";
+        using var c = Open();
+        await c.ExecuteAsync(sql, new { id, avatarChar });
+    }
+
+    /// <summary>写回一次昵称头像（仅用于库里昵称为空的历史数据补齐）。</summary>
     public async Task UpdateProfileAsync(long id, string nickname, string avatarUrl)
     {
         const string sql = @"UPDATE `user` SET nickname = @nickname, avatar_url = @avatarUrl WHERE id = @id";
-        using var c = Open();
-        await c.ExecuteAsync(sql, new { id, nickname, avatarUrl });
-    }
-
-    /// <summary>写回微信授权拿到的头像昵称，并标记为已授权（以后以库为准）。</summary>
-    public async Task UpdateWxProfileAsync(long id, string nickname, string avatarUrl)
-    {
-        const string sql = @"UPDATE `user` SET nickname = @nickname, avatar_url = @avatarUrl, wx_authorized = 1 WHERE id = @id";
         using var c = Open();
         await c.ExecuteAsync(sql, new { id, nickname, avatarUrl });
     }

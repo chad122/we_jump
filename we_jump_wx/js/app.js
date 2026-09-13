@@ -4,6 +4,7 @@
 var net = require('./net/net.js');
 var state = require('./state.js');
 var cfg = require('./config.js');
+var avatarUtil = require('./render/avatar.js');
 
 var sceneMain = require('./scenes/main.js');
 var sceneRoom = require('./scenes/room.js');
@@ -78,6 +79,7 @@ App.bootstrapLogin = function () {
     wx.setStorageSync('nickname', nickname);
   }
   var avatarUrl = wx.getStorageSync('avatarUrl') || '';
+  var avatarChar = wx.getStorageSync('avatarChar') || '';   // 头像文字（一个字）
 
   // 启动参数（分享卡片直达房间）
   try {
@@ -86,9 +88,9 @@ App.bootstrapLogin = function () {
   } catch (e) { state.pendingRoomNo = ''; }
 
   net.wxLogin().then(function (code) {
-    // authorized=false：这里带的是本地兜底昵称，服务端已有资料时不会被覆盖
+    // 本地兜底昵称/头像文字：库里已有资料时昵称不会被覆盖，头像文字非空才更新
     return net.post('/api/auth/login', {
-      code: code, nickname: nickname, avatarUrl: avatarUrl, authorized: false
+      code: code, nickname: nickname, avatarUrl: avatarUrl, avatarChar: avatarChar
     });
   }).then(function (res) {
     state.token = res.token;
@@ -126,32 +128,44 @@ App.syncProfileToStorage = function () {
   var u = state.user || {};
   if (u.nickname) wx.setStorageSync('nickname', u.nickname);
   if (u.avatarUrl) wx.setStorageSync('avatarUrl', u.avatarUrl);
+  if (u.avatarChar) wx.setStorageSync('avatarChar', u.avatarChar);
 };
 
-/** 微信授权成功后写入头像昵称，并重新登录同步到服务端。 */
-App.applyWechatProfile = function (nickName, avatarUrl) {
-  var changed = false;
-  if (nickName && nickName !== '微信用户') {
-    state.user = state.user || {};
-    state.user.nickname = nickName;
-    wx.setStorageSync('nickname', nickName);
-    changed = true;
-  }
-  if (avatarUrl) {
-    state.user = state.user || {};
-    state.user.avatarUrl = avatarUrl;
-    wx.setStorageSync('avatarUrl', avatarUrl);
-    changed = true;
-  }
-  if (!changed) {
-    this.toast('未获取到微信头像昵称');
-    return;
-  }
-  this.relogin(true);   // 已是微信授权资料：服务端落库并标记授权
+/** 保存头像文字（一个字）：写本地 + 重新登录同步到服务端（其他玩家据此显示头像）。 */
+App.saveAvatarChar = function (ch) {
+  state.user = state.user || {};
+  state.user.avatarChar = ch;
+  wx.setStorageSync('avatarChar', ch);
+  this.relogin('头像已更新');
+};
+
+/** 弹出输入框设置头像文字（只取一个字，emoji 按整字）。 */
+App.promptAvatarChar = function () {
+  var self = this;
+  var cur = (state.user && state.user.avatarChar) || '';
+  wx.showModal({
+    title: '输入一个字作为头像',
+    editable: true,
+    placeholderText: '例如：跳',
+    content: cur,
+    success: function (res) {
+      if (!res.confirm) return;
+      var ch = avatarUtil.firstChar(res.content || '');
+      if (!ch) { self.toast('请至少输入一个字'); return; }
+      self.saveAvatarChar(ch);
+    }
+  });
+};
+
+/** 建房/加房前必须已设置头像文字（一个字）。 */
+App.requireAvatarChar = function () {
+  if (state.user && state.user.avatarChar) return true;
+  this.toast('请先输入一个字作为头像');
+  return false;
 };
 
 /** 用当前本地的头像昵称重新登录（服务端会更新 user 资料）并重连 WebSocket。 */
-App.relogin = function (authorized) {
+App.relogin = function (okMsg) {
   var self = this;
   state.wsReady = false;
   net.wxLogin().then(function (code) {
@@ -159,7 +173,7 @@ App.relogin = function (authorized) {
       code: code,
       nickname: (state.user && state.user.nickname) || '',
       avatarUrl: (state.user && state.user.avatarUrl) || '',
-      authorized: !!authorized
+      avatarChar: (state.user && state.user.avatarChar) || ''
     });
   }).then(function (res) {
     state.token = res.token;
@@ -167,7 +181,7 @@ App.relogin = function (authorized) {
     self.syncProfileToStorage();
     if (state.ws) state.ws.close();
     self.connectWs(); // 连接成功后会自动回到主菜单
-    self.toast(authorized ? '头像昵称已保存' : '资料已更新');
+    self.toast(okMsg || '资料已更新');
   }).catch(function (err) {
     self.toast(err.message || '更新失败');
   });
@@ -184,10 +198,12 @@ App.connectWs = function () {
     self.send('ping', {});
     // 断线重连：回到上次房间；首次启动若有分享房间号也在此加入
     var joinNo = state.pendingRoomNo || state.lastRoomNo;
-    if (joinNo) {
+    if (joinNo && state.user && state.user.avatarChar) {
       state.pendingRoomNo = '';
       self.send('join_room', { roomNo: joinNo });
     } else {
+      // 没设过头像文字：留在主菜单，先让用户输入（分享直达同样受限）
+      if (joinNo) { state.pendingRoomNo = ''; self.toast('请先输入一个字作为头像'); }
       self.showScene('main');
     }
   };
@@ -252,6 +268,7 @@ App.showScene = function (name, data) {
   if (this.scene && typeof this.scene.leave === 'function') {
     try { this.scene.leave(); } catch (e) { /* ignore */ }
   }
+  this.prevScene = this.scene;   // 供结算弹窗把上一局棋盘画在背后
   var s = factory.create();
   s.enter(Object.assign({ app: this, w: this.w, h: this.h }, data || {}));
   this.scene = s;
@@ -263,10 +280,12 @@ App.currentSceneName = function () {
 
 // ---------------- 动作 ----------------
 App.actionCreate = function () {
+  if (!this.requireAvatarChar()) return;
   this.send('create_room', {});
 };
 
 App.promptJoin = function () {
+  if (!this.requireAvatarChar()) return;
   var self = this;
   wx.showModal({
     title: '加入房间',
@@ -311,6 +330,10 @@ App.onServerMessage = function (type, data) {
       }
       break;
     case 'game_start':
+      // 新一局开始：清掉上一局遗留的“已准备”标记，避免本局结束时弹窗直接显示已准备
+      if (state.room && state.room.players) {
+        for (var i = 0; i < state.room.players.length; i++) state.room.players[i].ready = false;
+      }
       this.showScene('game', { data: data });
       break;
     case 'game_state':
