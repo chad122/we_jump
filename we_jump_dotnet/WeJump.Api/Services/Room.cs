@@ -120,9 +120,13 @@ public sealed class Room
         }
     }
 
-    public void DetachSession(int seat)
+    /// <summary>
+    /// 摘除连接：仅当该座位当前持有的就是这条连接时才置为空。
+    /// 否则“旧连接的关闭事件”会把重连后的新会话误摘掉（玩家看起来变成离线、收不到广播）。
+    /// </summary>
+    public void DetachSession(int seat, WsSession session)
     {
-        lock (_sync) if (_bySeat.TryGetValue(seat, out var p)) p.Session = null;
+        lock (_sync) if (_bySeat.TryGetValue(seat, out var p) && p.Session == session) p.Session = null;
     }
 
     public bool TrySelectMap(GameMap map)

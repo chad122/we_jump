@@ -30,6 +30,7 @@ public sealed class GameEngine
     private int _arrivalCounter;
     private int _championSeat = -1;
     private string _championNickname = "";
+    private bool _finalized;            // 防重复结算（RunAsync 异常分支可能再调一次）
     private EndReason _reason = EndReason.None;
     private Task? _runTask;
 
@@ -249,6 +250,13 @@ public sealed class GameEngine
 
     private async Task FinalizeAsync()
     {
+        // 防重复结算：RunAsync 的异常分支可能再次调用（否则会重复广播 game_end、重复落库）
+        lock (_lock)
+        {
+            if (_finalized) return;
+            _finalized = true;
+        }
+
         var all = _room.Players;
 
         // 名次：已抵达按到达次序，未抵达按当前格数倒序
@@ -269,6 +277,10 @@ public sealed class GameEngine
             // 未完成玩家的剩余格数（终点为最后一格），供结算弹窗展示“还差几格”
             remain = p.Finished ? 0 : Math.Max(0, _map.Path.Count - 1 - p.Index)
         }).ToList();
+
+        // 先置为已结束再广播：否则 game_end 到落库完成之间，玩家点“再来一局”会被 PlayAgain 当作非 Ended 而静默丢弃
+        _room.SetPhase(RoomPhase.Ended);
+        _room.Engine = null;
 
         _room.Broadcast(Msg.GameEnd, new
         {
@@ -309,8 +321,5 @@ public sealed class GameEngine
             }).ToList();
             await _db.InsertPlayerResultsAsync(results);
         }
-
-        _room.SetPhase(RoomPhase.Ended);
-        _room.Engine = null;
     }
 }

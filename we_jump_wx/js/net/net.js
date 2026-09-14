@@ -67,8 +67,10 @@ function WsClient() {
 
 WsClient.prototype.connect = function (url) {
   var self = this;
+  var keepReconnect = self.autoReconnect;   // 内部会调 close() 把 autoReconnect 关掉，这里先留着
   self.url = url;
   self.close();
+  self.autoReconnect = keepReconnect;
 
   self.task = wx.connectSocket({ url: url, header: {} });
   var task = self.task;

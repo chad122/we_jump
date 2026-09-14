@@ -120,7 +120,7 @@ public sealed class RoomManager : IDisposable
             if (room == null) return;
             var p = room.FindByUser(session.UserId);
             if (p == null) return;
-            room.DetachSession(p.Seat);
+            room.DetachSession(p.Seat, session);   // 旧连接关闭时不动新会话（重连后旧连接才收到关闭事件）
 
             // 等待阶段全部离线超过时限的房间由 Sweep 清理
             room.Broadcast(Msg.RoomState, room.ToDto());
