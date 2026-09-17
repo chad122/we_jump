@@ -184,7 +184,7 @@ App.relogin = function (okMsg) {
     state.token = res.token;
     state.user = res.user;
     self.syncProfileToStorage();
-    if (state.ws) state.ws.close();
+    if (state.ws) state.ws.detach();   // 旧连接彻底丢弃：回调置空 + 关闭（避免旧连接的迟到消息被路由）
     self.connectWs(); // 连接成功后会自动回到主菜单
     self.toast(okMsg || '资料已更新');
   }).catch(function (err) {
@@ -200,6 +200,7 @@ App.connectWs = function () {
 
   state.ws.onOpen = function () {
     state.wsReady = true;
+    state.kicked = false;
     self.send('ping', {});
     // 断线重连：回到上次房间；首次启动若有分享房间号也在此加入
     var joinNo = state.pendingRoomNo || state.lastRoomNo;
@@ -236,6 +237,8 @@ App.heartbeat = function () {
 // ---------------- 发送 ----------------
 App.send = function (type, data) {
   if (!state.wsReady || !state.ws) {
+    // 被别处登录踢下线后用户又点了操作：主动重连（另一边会收到同样的下线提示，不会互踢）
+    if (state.kicked) { state.kicked = false; this.relogin('已重新连接，请再点一次'); return false; }
     this.toast('连接中，请稍候…');
     return false;
   }
@@ -331,6 +334,8 @@ App.onServerMessage = function (type, data) {
       this.showScene('room');
       break;
     case 'room_state':
+      // 只接受当前房间的状态：退房瞬间可能收到旧房间的迟到广播，不能让它覆盖新房间
+      if (state.room && data && data.roomNo && state.room.roomNo !== data.roomNo) return;
       state.room = data;
       if (this.currentSceneName() === 'result' && data.phase === 0) {
         this.showScene('room');
@@ -346,6 +351,16 @@ App.onServerMessage = function (type, data) {
     case 'game_state':
       // 对局中重连：若不在对局场景则进入（否则由 GameScene 自行同步）
       if (this.currentSceneName() !== 'game') this.showScene('game', { data: data, resume: true });
+      break;
+    case 'kicked':
+      // 同账号在别的设备登录：本机下线，且不再自动重连（避免两台设备互相踢）
+      state.wsReady = false;
+      state.kicked = true;
+      if (state.ws) state.ws.detach();
+      state.room = null;
+      state.lastRoomNo = '';
+      this.toast(data.msg || '账号已在其他设备登录');
+      this.showScene('main');
       break;
     case 'error':
       // 启动后自动回房失败（房间已不存在等）：回到主菜单，避免黑屏

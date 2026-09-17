@@ -39,6 +39,7 @@ public sealed class GameHub
             AvatarUrl = user.AvatarUrl,
             AvatarChar = user.AvatarChar
         };
+        _manager.RegisterSession(session);   // 同一账号只保留最新连接（旧连接被踢下线）
 
         try
         {

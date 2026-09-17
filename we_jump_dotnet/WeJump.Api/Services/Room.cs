@@ -44,14 +44,44 @@ public sealed class Room
     private readonly object _sync = new();
     private readonly Dictionary<int, RoomPlayer> _bySeat = new();
     private int _nextSeat;
+    private RoomPhase _phase = RoomPhase.Waiting;
+    private bool _aborted;
+    private GameEngine? _engine;
+    private DateTime _lastActiveAt = DateTime.UtcNow;
 
     public string RoomNo { get; }
     public DateTime CreatedAt { get; }
     public GameMap Map { get; private set; } = MapCatalog.Default;
-    public RoomPhase Phase { get; private set; } = RoomPhase.Waiting;
+
+    // Phase/Aborted/Engine 会被 RoomManager/GameHub/引擎在不同线程读写，统一加锁（lock 可重入，类内部已持锁处直接调用也安全）
+    public RoomPhase Phase
+    {
+        get { lock (_sync) return _phase; }
+        private set { lock (_sync) _phase = value; }
+    }
+
     public int HostSeat { get; private set; } = -1;
-    public bool Aborted { get; internal set; }
-    public GameEngine? Engine { get; internal set; }
+
+    public bool Aborted
+    {
+        get { lock (_sync) return _aborted; }
+        internal set { lock (_sync) _aborted = value; }
+    }
+
+    public GameEngine? Engine
+    {
+        get { lock (_sync) return _engine; }
+        internal set { lock (_sync) _engine = value; }
+    }
+
+    /// <summary>最近一次活动时间（加入/离开/选图/开局/广播等），用于回收闲置房间。</summary>
+    public DateTime LastActiveAt
+    {
+        get { lock (_sync) return _lastActiveAt; }
+    }
+
+    /// <summary>刷新活动时间（有任何消息往来就调用）。</summary>
+    public void Touch() { lock (_sync) _lastActiveAt = DateTime.UtcNow; }
 
     public Room(string roomNo)
     {
@@ -91,6 +121,7 @@ public sealed class Room
             };
             _bySeat[seat] = p;
             if (HostSeat < 0) HostSeat = seat;
+            _lastActiveAt = DateTime.UtcNow;
             return p;
         }
     }
@@ -102,7 +133,8 @@ public sealed class Room
             _bySeat.Remove(seat);
             if (HostSeat == seat || !_bySeat.ContainsKey(HostSeat))
                 HostSeat = _bySeat.Count == 0 ? -1 : _bySeat.Keys.Min();
-            if (_bySeat.Count == 0) Aborted = true;
+            if (_bySeat.Count == 0) _aborted = true;
+            _lastActiveAt = DateTime.UtcNow;
         }
     }
 
@@ -117,6 +149,7 @@ public sealed class Room
                 p.AvatarUrl = session.AvatarUrl ?? p.AvatarUrl;
                 p.AvatarChar = session.AvatarChar ?? p.AvatarChar;
             }
+            _lastActiveAt = DateTime.UtcNow;
         }
     }
 
@@ -126,28 +159,41 @@ public sealed class Room
     /// </summary>
     public void DetachSession(int seat, WsSession session)
     {
-        lock (_sync) if (_bySeat.TryGetValue(seat, out var p) && p.Session == session) p.Session = null;
+        lock (_sync)
+        {
+            if (_bySeat.TryGetValue(seat, out var p) && p.Session == session) p.Session = null;
+            _lastActiveAt = DateTime.UtcNow;
+        }
     }
 
     public bool TrySelectMap(GameMap map)
     {
         lock (_sync)
         {
-            if (Phase != RoomPhase.Waiting) return false;
+            if (_phase != RoomPhase.Waiting) return false;
             Map = map;
+            _lastActiveAt = DateTime.UtcNow;
             return true;
         }
     }
 
     public void SetPhase(RoomPhase phase)
     {
-        lock (_sync) Phase = phase;
+        lock (_sync)
+        {
+            _phase = phase;
+            _lastActiveAt = DateTime.UtcNow;
+        }
     }
 
     /// <summary>清空所有人“再来一局”的就绪标记（新一局开始时调用）。</summary>
     public void ResetReady()
     {
-        lock (_sync) foreach (var p in _bySeat.Values) p.Ready = false;
+        lock (_sync)
+        {
+            foreach (var p in _bySeat.Values) p.Ready = false;
+            _lastActiveAt = DateTime.UtcNow;
+        }
     }
 
     /// <summary>全部在线玩家是否都已点“再来一局”（至少 1 人）。</summary>
@@ -187,6 +233,7 @@ public sealed class Room
 
     public void Broadcast(string type, object? data)
     {
+        Touch();
         var json = WsJson.Msg(type, data);
         foreach (var p in Players) p.Session?.TrySend(json);
     }

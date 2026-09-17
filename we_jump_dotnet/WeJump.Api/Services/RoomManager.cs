@@ -9,10 +9,16 @@ namespace WeJump.Api.Services;
 /// </summary>
 public sealed class RoomManager : IDisposable
 {
+    /// <summary>等待房全员离线后的回收时间。</summary>
+    private static readonly TimeSpan IdleWaitingTtl = TimeSpan.FromMinutes(10);
+    /// <summary>对局中/已结束房间全员离线后的回收时间（留长一些，便于断线重连回房）。</summary>
+    private static readonly TimeSpan IdleOtherTtl = TimeSpan.FromMinutes(30);
+
     private readonly Db _db;
     private readonly object _lock = new();
     private readonly Dictionary<string, Room> _rooms = new(StringComparer.Ordinal);
     private readonly Dictionary<long, string> _userRoom = new(); // userId -> roomNo
+    private readonly Dictionary<long, WsSession> _userSession = new(); // userId -> 当前连接（多端时踢掉旧的）
     private readonly Timer _sweepTimer;
 
     public RoomManager(Db db)
@@ -24,6 +30,22 @@ public sealed class RoomManager : IDisposable
     public Room? GetRoomByNo(string roomNo)
     {
         lock (_lock) return _rooms.TryGetValue(roomNo, out var r) ? r : null;
+    }
+
+    /// <summary>
+    /// 登记新连接：同一账号已有活跃连接时，把旧连接踢下线（提示后关闭，客户端据此停止自动重连），
+    /// 避免多端同时操作同一个座位（两端都能发 jump）。
+    /// </summary>
+    public void RegisterSession(WsSession session)
+    {
+        WsSession? old;
+        lock (_lock)
+        {
+            _userSession.TryGetValue(session.UserId, out old);
+            _userSession[session.UserId] = session;
+        }
+        if (old != null && old != session && !old.IsClosed)
+            old.Kick(WsJson.Msg(Msg.Kicked, new { msg = "账号已在其他设备登录，本机已下线" }));
     }
 
     public Room? GetRoomOfUser(long userId)
@@ -116,6 +138,9 @@ public sealed class RoomManager : IDisposable
     {
         lock (_lock)
         {
+            // 先清连接登记（只清自己那条，避免把后来居上的新连接登记抹掉）
+            if (_userSession.TryGetValue(session.UserId, out var cur) && cur == session) _userSession.Remove(session.UserId);
+
             var room = GetRoomOfUser(session.UserId);
             if (room == null) return;
             var p = room.FindByUser(session.UserId);
@@ -207,10 +232,10 @@ public sealed class RoomManager : IDisposable
         var now = DateTime.UtcNow;
         lock (_lock)
         {
+            // 全员离线 + 超过闲置时限就回收：等待房 10 分钟，对局中/已结束 30 分钟
             var stale = _rooms.Values
-                .Where(r => r.Phase == RoomPhase.Waiting
-                            && !r.Players.Any(p => p.Online)
-                            && (now - r.CreatedAt) > TimeSpan.FromMinutes(10))
+                .Where(r => !r.Players.Any(p => p.Online)
+                            && (now - r.LastActiveAt) > (r.Phase == RoomPhase.Waiting ? IdleWaitingTtl : IdleOtherTtl))
                 .ToList();
             foreach (var r in stale)
             {

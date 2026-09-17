@@ -5,9 +5,10 @@ var SEAT_COLORS = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#f9ca24', '#a55eea', '#ff9f
 
 module.exports = {
   token: '',
-  user: null,           // {id,nickname,avatarUrl}
+  user: null,           // {id,nickname,avatarUrl,avatarChar}
   ws: null,             // WsClient
   wsReady: false,
+  kicked: false,        // 是否因“同账号在别处登录”被踢下线（下次操作时主动重连）
   safeTop: 0,           // 安全区顶部留白（刘海/状态栏高度）
   safeBottom: 0,        // 安全区底部留白（home indicator）
   capsuleBottom: 0,     // 右上角胶囊按钮底边（小地图等右上内容靠它避让）

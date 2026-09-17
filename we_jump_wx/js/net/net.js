@@ -110,6 +110,18 @@ WsClient.prototype.send = function (type, data) {
   } catch (e) { return false; }
 };
 
+/**
+ * 彻底解绑并关闭：置空所有回调 + 关闭 socket（关掉自动重连）。
+ * 用于换新连接前丢弃旧连接，避免旧连接的迟到消息/事件还被路由到 App。
+ */
+WsClient.prototype.detach = function () {
+  this.onOpen = null;
+  this.onMessage = null;
+  this.onError = null;
+  this.onClose = null;
+  this.close();
+};
+
 WsClient.prototype.close = function () {
   if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
   this.autoReconnect = false;

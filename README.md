@@ -52,7 +52,7 @@ docs/sql/               MySQL DDL（手动执行）
 ## 通信协议（WebSocket，JSON 信封 `{type,data}`）
 
 客户端->服务端：`create_room` / `join_room{roomNo}` / `leave_room`（**任何阶段都真正退出房间并释放座位**，只有断线才保留座位用于重连） / `select_map{mapId}` / `start_game` / `play_again`（结算弹窗点“再来一局”，全员就绪后按同一张地图重开） / `jump{elapsedMs}` / `ping`
-服务端->客户端：`joined` / `room_state{...,players[{seat,nickname,avatarUrl,avatarChar,online,ready}]}`（结算阶段用于展示“已准备”人数）/ `game_start{mapId,mapName,durationSeconds,startTs,maxStep,firstCellMs,ratio,path,players[{seat,nickname,avatarUrl,avatarChar,index,finished,rank}]}` / `countdown{n}`（n=0 表示开始，此后可自由跳跃） / `player_move{seat,from,steps,index,isOut,isFinish,rank}` / `game_state{...}`（断线重连快照，与 `game_start` 同构） / `game_end{reason,reasonText,ranks[{seat,nickname,index,finished,rank,remain}]}`（`remain` = 未完成玩家的剩余格数，已抵达为 0）/ `error`
+服务端->客户端：`joined` / `room_state{...,players[{seat,nickname,avatarUrl,avatarChar,online,ready}]}`（结算阶段用于展示“已准备”人数）/ `game_start{mapId,mapName,durationSeconds,startTs,maxStep,firstCellMs,ratio,path,players[{seat,nickname,avatarUrl,avatarChar,index,finished,rank}]}` / `countdown{n}`（n=0 表示开始，此后可自由跳跃） / `player_move{seat,from,steps,index,isOut,isFinish,rank}` / `game_state{...}`（断线重连快照，与 `game_start` 同构） / `game_end{reason,reasonText,ranks[{seat,nickname,index,finished,rank,remain}]}`（`remain` = 未完成玩家的剩余格数，已抵达为 0）/ `kicked{msg}`（同账号在别处登录，本连接被踢下线，客户端应停止自动重连）/ `error`
 
 ## 玩法规则的实现裁定（对 PRD 4.2/4.3 的歧义澄清）
 
@@ -63,6 +63,7 @@ docs/sql/               MySQL DDL（手动执行）
 - $s>d$（跳越过拐弯/终点所在直线边界）→ **飞出边界，回到起点**。
 - **实时自由跳跃（无回合等待）**：3-2-1 倒计时后，所有玩家可各自随时蓄力松手、互不等待；客户端只上报蓄力时长 `elapsedMs`，服务端每收到一次跳跃即反推步数并**立即广播该玩家移动**（防变速作弊占位）。
 - 落地恢复：每次跳跃后有短暂冷却（客户端 700ms / 服务端最小间隔 500ms），防止“连点小跳”刷进度；蓄力越久跳得越远，单位时间收益更高。
+- **蓄力时长服务端校正**：服务端不直接相信客户端上报的 `elapsedMs`，而是按“距上次跳跃的服务端间隔 − 落地冷却”算出这次最多可能蓄力的时长，超出部分截断（正常玩家 700ms 冷却 + 真实蓄力不会受影响，伪造满蓄力的作弊者最多只能得到 1 格）。
 - 结束：**首名抵达终点立即结算（模式A）**（无 10s 倒计时缓冲）；全程无人抵达且达地图硬时限 → **超时结算（模式B）**。
 
 ## MVP 范围与“后置占位”清单
@@ -74,6 +75,8 @@ docs/sql/               MySQL DDL（手动执行）
 ## 备注
 
 - 房间与对局均为服务端内存态（MVP 不落库房间），重启用 Redis 令牌鉴权。
+- 房间回收：全员离线且闲置超过时限（等待房 10 分钟 / 对局中与已结束 30 分钟）的房间会被定时清理并解除成员映射。
+- 同账号只保留最新一条连接：新连接会发 `kicked` 踢掉旧连接（旧客户端据此停止自动重连，避免多端同时操作同一座位）。
 - 地图路径为服务端权威，开局 `game_start.path` 下发；客户端仅本地渲染。
 - 对局结束写入 `game_record`/`game_player_result`，供排行榜等使用。
 - 音频：客户端用 WebAudio（`wx.createWebAudioContext`）**实时合成，不依赖任何音频资源文件**（`js/audio/sound.js`）——菜单/房间舒缓 BGM、对局中紧迫 BGM（带低音鼓点）+ 每次跳跃音效 + 有人抵达终点的音效；首次触摸后解锁、切后台暂停并在回前台续播，平台不支持 WebAudio 时静默降级。

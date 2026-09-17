@@ -15,6 +15,7 @@ public sealed class WsSession : IAsyncDisposable
         new UnboundedChannelOptions { SingleReader = true });
     private readonly CancellationTokenSource _cts = new();
     private Task? _writer;
+    private volatile bool _closeAfterFlush;   // 已通知客户端下线，发完这条就关连接
 
     public long UserId { get; set; }
     public string? Nickname { get; set; }
@@ -44,6 +45,12 @@ public sealed class WsSession : IAsyncDisposable
                 if (_ws.State != WebSocketState.Open) break;
                 var bytes = Encoding.UTF8.GetBytes(json);
                 await _ws.SendAsync(bytes, WebSocketMessageType.Text, true, _cts.Token);
+                if (_closeAfterFlush) break;   // 下线提示已发出：不再排后续消息，收尾关闭
+            }
+            if (_closeAfterFlush && _ws.State == WebSocketState.Open)
+            {
+                using var cts = new CancellationTokenSource(1500);
+                await _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "kicked", cts.Token);
             }
         }
         catch (OperationCanceledException) { }
@@ -53,10 +60,18 @@ public sealed class WsSession : IAsyncDisposable
 
     public void TrySend(string json)
     {
+        if (_closeAfterFlush) return;   // 已踢下线：不再排队，避免队列无人消费
         if (!_queue.Writer.TryWrite(json))
         {
             // 队列已关闭（连接已断开），忽略。
         }
+    }
+
+    /// <summary>踢下线：把提示消息排进发送队列，发完这条即优雅关闭（保证客户端能收到提示再停止自动重连）。</summary>
+    public void Kick(string json)
+    {
+        _closeAfterFlush = true;
+        _queue.Writer.TryWrite(json);
     }
 
     /// <summary>关闭连接：停止 writer，尝试正常关闭 WebSocket。</summary>

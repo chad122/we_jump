@@ -26,6 +26,7 @@ public sealed class GameEngine
 
     private bool _live;                 // 倒计时结束、进入可跳跃状态
     private DateTime _gameStartUtc;
+    private DateTime _liveAt;           // 进入可跳跃状态的时刻（首次跳跃的蓄力基准）
     private long _startTs;
     private int _arrivalCounter;
     private int _championSeat = -1;
@@ -58,8 +59,14 @@ public sealed class GameEngine
             if (p == null || !p.Online || p.Finished) return false;
 
             var now = DateTime.UtcNow;
-            if (_lastJumpAt.TryGetValue(seat, out var last) &&
-                (now - last).TotalMilliseconds < JumpCooldownMs) return false;
+            double sinceMs = _lastJumpAt.TryGetValue(seat, out var last)
+                ? (now - last).TotalMilliseconds
+                : (now - _liveAt).TotalMilliseconds;
+            if (sinceMs < JumpCooldownMs) return false;   // 两次跳跃间隔过短
+            // 服务端权威校正蓄力时长：距上次跳跃的服务端间隔减去落地冷却，就是这次最多能蓄力的时间。
+            // 客户端伪造过大的 elapsedMs（直接拿满格）会被截断，而正常玩家（冷却 700ms + 真实蓄力）不受影响。
+            double maxChargeMs = Math.Max(0, sinceMs - JumpCooldownMs);
+            if (elapsedMs > maxChargeMs) elapsedMs = maxChargeMs;
             _lastJumpAt[seat] = now;
 
             var path = _map.Path;
@@ -138,6 +145,7 @@ public sealed class GameEngine
             if (_room.Aborted) return;
 
             _live = true;
+            _liveAt = DateTime.UtcNow;
             _room.Broadcast(Msg.Countdown, new { n = 0 });
 
             while (true)

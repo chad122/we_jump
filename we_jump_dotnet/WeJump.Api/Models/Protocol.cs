@@ -21,6 +21,7 @@ public static class Msg
     public const string Countdown = "countdown";     // 3-2-1；n=0 表示开始（此后可自由跳跃）
     public const string PlayerMove = "player_move";  // 某位玩家的一次移动结算
     public const string GameEnd = "game_end";        // 对局结束（附名次）
+    public const string Kicked = "kicked";           // 同账号在别处登录，本连接被踢下线（客户端应停止自动重连）
     public const string Error = "error";
 }
 
